@@ -177,30 +177,92 @@ class qc_app {
                 position = vec4(vertex, 1) * vec4(2, 1, 1, 1);
                 gl_Position = vec4(vertex, 1.);
             }`, `
-            precision mediump float;
+            #define FLT_MAX 3.402e+38
+            precision highp float;
             uniform vec2 viewport_size;
 
             struct ray { vec3 ori; vec3 dir; };
 
-            bool hit_sphere(const vec3 center, float radius, const ray r) {
-                vec3 oc = r.ori - center;
+            vec3 ray_point(const ray r, float t) {
+                return r.ori + t * r.dir;
+            }
+
+            struct hit_result {
+                float t; //time
+                vec3  p; //point
+                vec3  n; //normal
+            };
+
+            struct sphere {
+                vec3 center; 
+                float radius;
+            };
+
+            bool sphere_hit(const sphere self, const ray r, float tmin, float tmax, out hit_result hit) {
+                vec3 oc = r.ori - self.center;
                 float a = dot(r.dir, r.dir);
                 float b = 2. * dot(oc, r.dir);
-                float c = dot(oc, oc) - radius * radius;
-                return (b*b - 4.*a*c) > 0.;
+                float c = dot(oc, oc) - self.radius * self.radius;
+                float det = b*b - 4.*a*c; 
+
+                if (det > 0.) {
+                    float tmp = (-b - sqrt(det))/(2.*a);
+                    if (tmp > tmin && tmp < tmax) {
+                        hit.t = tmp;
+                        hit.p = ray_point(r, tmp);
+                        hit.n = (hit.p - self.center) / self.radius;
+                        return true;
+                    }
+                    tmp = (-b + sqrt(det))/(2.*a);
+                    if (tmp > tmin && tmp < tmax) {
+                        hit.t = tmp;
+                        hit.p = ray_point(r, tmp);
+                        // hit.n = (hit.p - self.center) / self.radius;
+                        hit.n = vec3(0);
+                        return true;
+                    }
+                }
+                return false;
+            }
+
+            #define SPHERES_NUM 2
+            sphere spheres[SPHERES_NUM];
+
+            bool hit_spheres(const ray r, out hit_result res) {
+                hit_result hit;
+                bool b_hit = false;
+                float t_min = 0.;
+                float t_max = FLT_MAX;
+
+                for (int i = 0; i < SPHERES_NUM; ++i) {
+                    if (sphere_hit(spheres[i], r, t_min, t_max, hit)) {
+                        t_max = hit.t;
+                        res   = hit;
+                        b_hit = true;
+                    }
+                }
+
+                return b_hit;
             }
 
             vec3 color(const ray r) {
-                if (hit_sphere(vec3(0, 0, -1), .5, r)) {
-                    return vec3(1, 0, 0);
+                hit_result hit;
+                if (hit_spheres(r, hit)) {
+                    return (hit.n + 1.) / 2.;
                 }
-                vec3 udir = normalize(r.dir);
-                float t = .5 * (udir.y + 1.);
-                return mix(vec3(1), vec3(.5,.7,1), t);
+
+                {
+                    vec3 udir = normalize(r.dir);
+                    float t = .5 * (udir.y + 1.);
+                    return mix(vec3(1), vec3(.5,.7,1), t);
+                }
             }
 
             varying vec4 position;
             void main() {
+                spheres[0] = sphere(vec3(0, 0, -1), .5);
+                spheres[1] = sphere(vec3(0, -100.5, -1), 100.);
+
                 // gl_FragColor = (position + 1.) * 0.5;
                 ray r = ray(vec3(0), vec3(position.xy, -1));
                 gl_FragColor.rgb = color(r);
@@ -219,12 +281,17 @@ class qc_app {
 
     draw_lines = new qu_attribute(false, this);
     mesh = new qu_attribute('quad', this);
+    render_time = new qu_attribute(0, this);
 
     render() {
+        let t_start = Date.now();
+
         this.canvas.clear();
         this.shader.draw_mesh(
             this[this.mesh.get_value()], 
             this.draw_lines.get_value() ? 'lines' : 'triangles');
+
+        // this.render_time.set_value((Date.now() - t_start)/1000.0);
     }
 
     loop() {
