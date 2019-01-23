@@ -182,18 +182,32 @@ class qc_app {
             
             `
             #define FLT_MAX 3.402e+38
+            #define PI 3.14159265359
+
             precision highp float;
 
             uniform float u_time;
-            uniform vec2 viewport_size;
+            uniform float u_rays_per_pixel;
+            uniform vec2  u_viewport_size;
 
             float g_rand_idx = 1.;
-            float rand() {
-                return fract(sin(dot(
-                    vec2(12.9898,78.233),
-                    // gl_FragCoord.xy)) * 43758.5453);
-                    gl_FragCoord.xy + vec2(u_time, ++g_rand_idx))) * 43758.5453);
-                    // )) * 43758.5453 * ((u_time + ++g_rand_idx) * 1e-3));
+            highp float rand() {
+                const highp float a = 12.9898, b = 78.233, c = 43758.5453;
+                highp float dt = dot( fract(gl_FragCoord.xy * (g_rand_idx += .001)), vec2( a, b ) ), 
+                // highp float dt = dot( gl_FragCoord.xy, vec2( a, b ) ), 
+                            sn = mod( dt, PI );
+                return fract(sin(sn) * c);
+            }
+
+            vec3 randv3(float length) {
+                return vec3(rand(), rand(), rand()) * 2. * length - length;
+            }
+
+            vec3 rand_point_in_sphere() {
+                // vec3 r = randv3(1.);
+                // return normalize(r) * pow(rand(), 1./3.);
+                return normalize(randv3(1.));
+                // return randv3(.5);
             }
 
             struct ray { vec3 ori; vec3 dir; };
@@ -232,8 +246,7 @@ class qc_app {
                     if (tmp > tmin && tmp < tmax) {
                         hit.t = tmp;
                         hit.p = ray_point(r, tmp);
-                        // hit.n = (hit.p - self.center) / self.radius;
-                        hit.n = vec3(0);
+                        hit.n = (hit.p - self.center) / self.radius;
                         return true;
                     }
                 }
@@ -246,7 +259,7 @@ class qc_app {
             bool hit_spheres(const ray r, out hit_result res) {
                 hit_result hit;
                 bool b_hit = false;
-                float t_min = 0.;
+                float t_min = 0.001;
                 float t_max = FLT_MAX;
 
                 for (int i = 0; i < SPHERES_NUM; ++i) {
@@ -260,17 +273,25 @@ class qc_app {
                 return b_hit;
             }
 
-            vec3 color(const ray r) {
+            vec3 color(ray r) {
                 hit_result hit;
-                if (hit_spheres(r, hit)) {
-                    return (hit.n + 1.) / 2.;
+                vec4       color = vec4(0, 0, 0, 1);
+
+                for (int i = 0; i < 2; ++i) {
+                    if (hit_spheres(r, hit)) {
+                        vec3 target = hit.p + hit.n + rand_point_in_sphere();
+                        r = ray(hit.p, target - hit.p);
+                        color.a *= .5;
+                    }
+                    else {
+                        vec3 udir = normalize(r.dir);
+                        float t = .5 * (udir.y + 1.);
+                        color.rgb = mix(vec3(1), vec3(.5,.7,1), t);
+                        break;
+                    }
                 }
 
-                {
-                    vec3 udir = normalize(r.dir);
-                    float t = .5 * (udir.y + 1.);
-                    return mix(vec3(1), vec3(.5,.7,1), t);
-                }
+                return color.rgb * color.a;
             }
 
             vec2 randv(float min, float max) {
@@ -279,49 +300,52 @@ class qc_app {
 
             varying vec4 position;
             void main() {
-                spheres[0] = sphere(vec3(0, 0, -1), .5);
+                spheres[0] = sphere(vec3(0, sin(u_time*.0005), -1), .5);
                 spheres[1] = sphere(vec3(0, -100.5, -1), 100.);
 
                 vec2 size = vec2(400, 200);
                 vec3 cam_pos = vec3(0);
-                const int passes  = 16;
+                int passes  = int(u_rays_per_pixel);
 
-                for (int i = 0; i < passes; ++i) {
+
+                ray r = ray(cam_pos, vec3(position.xy, -1));
+                gl_FragColor.rgb += color(r);
+
+                for (int i = 1; i < 128; ++i) {
+                    if (--passes == 0) break;
                     ray r = ray(cam_pos, vec3(position.xy + randv(-1.5, 1.5) / size, -1));
                     gl_FragColor.rgb += color(r);
                 }
 
-                gl_FragColor.rgb /= float(passes);
+                gl_FragColor.rgb /= float(u_rays_per_pixel);
 
                 // gl_FragColor.xyz = vec3(rand());
                 gl_FragColor.a = 1.;
             }`);
 
-        this.shader.uniforms.viewport_size = new Float32Array([this.canvas.canvas.width, this.canvas.canvas.height]);
+        this.shader.set_uniformf('u_viewport_size', [this.canvas.canvas.width, this.canvas.canvas.height]);
     }
 
     do_update = new qu_attribute(true, this);
+    rays_per_pixel = new qu_attribute(8, this);
     app_start_time = Date.now();
 
     update() {
-        this.shader.set_uniformf('u_time', [Date.now() - this.app_start_time]);
-        this.render();
+        if (this.do_update.get_value()) {
+            this.shader.set_uniformf('u_time', [Date.now() - this.app_start_time]);
+            this.shader.set_uniformf('u_rays_per_pixel', [this.rays_per_pixel.get_value()]);
+            this.render();
+        }
         requestAnimationFrame(this.update.bind(this));
     }
 
     draw_lines = new qu_attribute(false, this);
-    mesh = new qu_attribute('quad', this);
-    render_time = new qu_attribute(0, this);
 
     render() {
-        let t_start = Date.now();
-
         this.canvas.clear();
         this.shader.draw_mesh(
-            this[this.mesh.get_value()], 
+            this.quad,
             this.draw_lines.get_value() ? 'lines' : 'triangles');
-
-        // this.render_time.set_value((Date.now() - t_start)/1000.0);
     }
 
     loop() {
