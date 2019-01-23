@@ -186,6 +186,8 @@ class qc_app {
 
             precision highp float;
 
+            varying vec4 position;
+
             uniform float u_time;
             uniform float u_rays_per_pixel;
             uniform vec2  u_viewport_size;
@@ -199,6 +201,9 @@ class qc_app {
                 return fract(sin(sn) * c);
             }
 
+            vec2 randv2(float length) {
+                return vec2(rand(), rand()) * 2. * length - length;
+            }
             vec3 randv3(float length) {
                 return vec3(rand(), rand(), rand()) * 2. * length - length;
             }
@@ -216,15 +221,23 @@ class qc_app {
                 return r.ori + t * r.dir;
             }
 
+            struct tmaterial {
+                int  type;
+                vec3 albedo;
+                float fuz; // for metal
+            };
+
             struct hit_result {
                 float t; //time
                 vec3  p; //point
                 vec3  n; //normal
+                tmaterial m;
             };
 
             struct sphere {
                 vec3 center; 
                 float radius;
+                tmaterial material;
             };
 
             bool sphere_hit(const sphere self, const ray r, float tmin, float tmax, out hit_result hit) {
@@ -234,26 +247,30 @@ class qc_app {
                 float c = dot(oc, oc) - self.radius * self.radius;
                 float det = b*b - 4.*a*c; 
 
+                bool b_hit = false;
                 if (det > 0.) {
                     float tmp = (-b - sqrt(det))/(2.*a);
+
                     if (tmp > tmin && tmp < tmax) {
-                        hit.t = tmp;
-                        hit.p = ray_point(r, tmp);
-                        hit.n = (hit.p - self.center) / self.radius;
-                        return true;
+                        b_hit = true;
+                    } else {
+                        tmp = (-b + sqrt(det))/(2.*a);
+                        if (tmp > tmin && tmp < tmax) {
+                            b_hit = true;
+                        }
                     }
-                    tmp = (-b + sqrt(det))/(2.*a);
-                    if (tmp > tmin && tmp < tmax) {
+
+                    if (b_hit) {
                         hit.t = tmp;
                         hit.p = ray_point(r, tmp);
                         hit.n = (hit.p - self.center) / self.radius;
-                        return true;
+                        hit.m = self.material;
                     }
                 }
-                return false;
+                return b_hit;
             }
 
-            #define SPHERES_NUM 2
+            #define SPHERES_NUM 4
             sphere spheres[SPHERES_NUM];
 
             bool hit_spheres(const ray r, out hit_result res) {
@@ -273,38 +290,51 @@ class qc_app {
                 return b_hit;
             }
 
+            vec3 scatter(inout ray r, const hit_result hit) {
+                // lambertian
+                if (hit.m.type == 0) {
+                    vec3 target = hit.p + hit.n + rand_point_in_sphere();
+                    r = ray(hit.p, target - hit.p);
+                    return hit.m.albedo;
+                }
+                // metal
+                else if (hit.m.type == 1) {
+                    vec3 t = reflect(normalize(r.dir), hit.n);
+                    r = ray(hit.p, t + rand_point_in_sphere() * hit.m.fuz);
+                    return hit.m.albedo;
+                }
+                return vec3(0);
+            }
+
             vec3 color(ray r) {
                 hit_result hit;
-                vec4       color = vec4(0, 0, 0, 1);
+                vec3 attenuation = vec3(1);
+                vec3 color = vec3(0);
 
                 for (int i = 0; i < 4; ++i) {
                     if (hit_spheres(r, hit)) {
-                        vec3 target = hit.p + hit.n + rand_point_in_sphere();
-                        r = ray(hit.p, target - hit.p);
-                        color.a *= .5;
+                        vec3 att = vec3(1);
+                        attenuation *= scatter(r, hit);
                     }
                     else {
                         vec3 udir = normalize(r.dir);
                         float t = .5 * (udir.y + 1.);
-                        color.rgb = mix(vec3(1), vec3(.5,.7,1), t);
+                        color = mix(vec3(1), vec3(.5,.7,1), t);
                         break;
                     }
                 }
 
-                return color.rgb * color.a;
+                return color * attenuation;
             }
 
-            vec2 randv(float min, float max) {
-                return vec2(rand(), rand()) * (max - min) + min;
-            }
-
-            varying vec4 position;
             void main() {
-                spheres[0] = sphere(vec3(0, sin(u_time*.0005), -1), .5);
-                spheres[1] = sphere(vec3(0, -100.5, -1), 100.);
+                spheres[0] = sphere(vec3( 0, sin(u_time*.0005), -1), .5, tmaterial(0, vec3(.8, .3, .3), 0.));
+                spheres[1] = sphere(vec3(-1, 0, -1),                 .5, tmaterial(1, vec3(.8, .6, .2), 0.5));
+                spheres[2] = sphere(vec3( 1, 0, -1),                 .5, tmaterial(1, vec3(.8, .8, .8), 0.));
+                spheres[3] = sphere(vec3(0, -100.5, -1),           100., tmaterial(0, vec3(.8, .8,  0), 0.));
 
-                vec2 size = vec2(400, 200);
-                vec3 cam_pos = vec3(0);
+                vec2 size = u_viewport_size;
+                vec3 cam_pos = vec3(0, 0, .5);
                 int passes  = int(u_rays_per_pixel);
 
 
@@ -313,7 +343,7 @@ class qc_app {
 
                 for (int i = 1; i < 128; ++i) {
                     if (--passes == 0) break;
-                    ray r = ray(cam_pos, vec3(position.xy + randv(-1.5, 1.5) / size, -1));
+                    ray r = ray(cam_pos, vec3(position.xy + randv2(1.5) / size, -1));
                     gl_FragColor.rgb += color(r);
                 }
 
