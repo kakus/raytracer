@@ -163,6 +163,10 @@ class qr_webgl_shader {
             draw_type == 'triangles' ? egl.TRIANGLES : egl.LINES);
     }
 
+    set_uniformf(name: string, data: number[]) {
+        this.uniforms[name] = new Float32Array(data);
+    }
+
     set_uniforms() {
         const gl = this.gl;
 

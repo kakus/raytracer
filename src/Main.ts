@@ -176,10 +176,25 @@ class qc_app {
             void main() {
                 position = vec4(vertex, 1) * vec4(2, 1, 1, 1);
                 gl_Position = vec4(vertex, 1.);
-            }`, `
+            }`, 
+
+            /* Fragment */
+            
+            `
             #define FLT_MAX 3.402e+38
             precision highp float;
+
+            uniform float u_time;
             uniform vec2 viewport_size;
+
+            float g_rand_idx = 1.;
+            float rand() {
+                return fract(sin(dot(
+                    vec2(12.9898,78.233),
+                    // gl_FragCoord.xy)) * 43758.5453);
+                    gl_FragCoord.xy + vec2(u_time, ++g_rand_idx))) * 43758.5453);
+                    // )) * 43758.5453 * ((u_time + ++g_rand_idx) * 1e-3));
+            }
 
             struct ray { vec3 ori; vec3 dir; };
 
@@ -258,14 +273,27 @@ class qc_app {
                 }
             }
 
+            vec2 randv(float min, float max) {
+                return vec2(rand(), rand()) * (max - min) + min;
+            }
+
             varying vec4 position;
             void main() {
                 spheres[0] = sphere(vec3(0, 0, -1), .5);
                 spheres[1] = sphere(vec3(0, -100.5, -1), 100.);
 
-                // gl_FragColor = (position + 1.) * 0.5;
-                ray r = ray(vec3(0), vec3(position.xy, -1));
-                gl_FragColor.rgb = color(r);
+                vec2 size = vec2(400, 200);
+                vec3 cam_pos = vec3(0);
+                const int passes  = 16;
+
+                for (int i = 0; i < passes; ++i) {
+                    ray r = ray(cam_pos, vec3(position.xy + randv(-1.5, 1.5) / size, -1));
+                    gl_FragColor.rgb += color(r);
+                }
+
+                gl_FragColor.rgb /= float(passes);
+
+                // gl_FragColor.xyz = vec3(rand());
                 gl_FragColor.a = 1.;
             }`);
 
@@ -273,8 +301,10 @@ class qc_app {
     }
 
     do_update = new qu_attribute(true, this);
+    app_start_time = Date.now();
 
     update() {
+        this.shader.set_uniformf('u_time', [Date.now() - this.app_start_time]);
         this.render();
         requestAnimationFrame(this.update.bind(this));
     }
