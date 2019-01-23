@@ -277,7 +277,7 @@ class qc_app {
                 hit_result hit;
                 vec4       color = vec4(0, 0, 0, 1);
 
-                for (int i = 0; i < 2; ++i) {
+                for (int i = 0; i < 4; ++i) {
                     if (hit_spheres(r, hit)) {
                         vec3 target = hit.p + hit.n + rand_point_in_sphere();
                         r = ray(hit.p, target - hit.p);
@@ -318,6 +318,7 @@ class qc_app {
                 }
 
                 gl_FragColor.rgb /= float(u_rays_per_pixel);
+                gl_FragColor.rgb = sqrt(gl_FragColor.rgb);
 
                 // gl_FragColor.xyz = vec3(rand());
                 gl_FragColor.a = 1.;
