@@ -390,6 +390,14 @@ export function multiply(out, a, b) {
   return out;
 }
 
+export function mutliplyv(out, a, b, ...m) {
+  multiply(out, a, b);
+  for (let i = 0; i < m.length; ++i) {
+    multiply(out, out, m[i]);
+  }
+  return out;
+}
+
 /**
  * Translate a mat4 by the given vector
  *

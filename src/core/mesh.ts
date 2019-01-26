@@ -149,12 +149,6 @@ class qr_webgl_shader {
         private gl: WebGLRenderingContext,
         private program: WebGLProgram
     ) { 
-        this.uniforms.model = mat4.create();
-        this.uniforms.projection = mat4.perspective(mat4.create(), Math.PI/4, 2, 1, 2000);
-        this.uniforms.view = mat4.fromRotationTranslation(mat4.create(),
-            quat.setAxisAngle(quat.create(), [0, 0, 1], 0),
-            vec3.fromValues(0, 0, -3));
-        //mat4.invert(this.uniforms.view, this.uniforms.view);
     }
 
     draw_mesh(mesh: qr_webgl_mesh, draw_type: 'triangles' | 'lines' = 'triangles') {

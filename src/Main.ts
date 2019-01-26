@@ -104,6 +104,20 @@ class qu_debug_explorer {
             input.classList.add('attribute-value');
             widget.innerHTML = `<div class='attribute-name'>${attribute.get_name()}</div>`;
             widget.append(input);
+        // } else if (attribute.get_value() instanceof Array &&
+        //            attribute.get_value().every(e => typeof e === 'number')) {
+        } else if (attribute.get_value() instanceof Float32Array) {
+            let arr: any[] = attribute.get_value();
+            widget.innerHTML = `<div class='attribute-name'>${attribute.get_name()}</div>`;
+
+            for (let idx = 0; idx < arr.length; ++idx) {
+                let input = document.createElement('input');
+                input.type = 'text';
+                input.onchange = () => attribute.alter(v => (v[idx] = parseFloat(input.value), v));
+                input.value = arr[idx].toFixed(4);
+                input.classList.add('attribute-value');
+                widget.append(input);
+            }
         } else {
             widget.innerText = 
                 `${attribute.get_name()}: ${attribute.get_value()}`;
@@ -167,14 +181,12 @@ class qc_app {
         // document.body.appendChild(this.canvas.canvas);
 
         this.shader = this.canvas.make_shader(`
-            uniform mat4 projection;
-            uniform mat4 view;
-            uniform mat4 model;
-
+            uniform vec2 u_viewport_size;
             attribute vec3 vertex;
             varying vec4 position;
             void main() {
-                position = vec4(vertex, 1) * vec4(2, 1, 1, 1);
+                vec2 ratio = u_viewport_size / u_viewport_size.x;
+                position = vec4(vertex, 1) * vec4(ratio, 1, 1);
                 gl_Position = vec4(vertex, 1.);
             }`, 
 
@@ -191,6 +203,10 @@ class qc_app {
             uniform float u_time;
             uniform float u_rays_per_pixel;
             uniform vec2  u_viewport_size;
+            uniform float u_fov;
+            uniform mat4  u_view;
+            // uniform vec3  u_cam_position;
+            // uniform vec3  u_cam_
 
             float g_rand_idx = 1.;
             highp float rand() {
@@ -251,14 +267,8 @@ class qc_app {
                 if (det > 0.) {
                     float tmp = (-b - sqrt(det))/(2.*a);
 
-                    if (tmp > tmin && tmp < tmax) {
-                        b_hit = true;
-                    } else {
-                        tmp = (-b + sqrt(det))/(2.*a);
-                        if (tmp > tmin && tmp < tmax) {
-                            b_hit = true;
-                        }
-                    }
+                    b_hit = tmp > tmin && tmp < tmax || 
+                           (tmp = (-b + sqrt(det)) / (2.*a), tmp > tmin && tmp < tmax);
 
                     if (b_hit) {
                         hit.t = tmp;
@@ -333,17 +343,19 @@ class qc_app {
                 spheres[2] = sphere(vec3( 1, 0, -1),                 .5, tmaterial(1, vec3(.8, .8, .8), 0.));
                 spheres[3] = sphere(vec3(0, -100.5, -1),           100., tmaterial(0, vec3(.8, .8,  0), 0.));
 
-                vec2 size = u_viewport_size;
-                vec3 cam_pos = vec3(0, 0, .5);
+                vec2 inv_size = 1. / u_viewport_size;
+                vec3 cam_pos = (u_view * vec4(0, 0, 0, 1)).xyz;
                 int passes  = int(u_rays_per_pixel);
 
+                float h = 0.5 / tan(radians(u_fov));
 
-                ray r = ray(cam_pos, vec3(position.xy, -1));
-                gl_FragColor.rgb += color(r);
+                // ray r = ray(cam_pos, vec3(position.xy, -h));
+                // gl_FragColor.rgb += color(r);
 
-                for (int i = 1; i < 128; ++i) {
+                for (int i = 0; i < 128; ++i) {
                     if (--passes == 0) break;
-                    ray r = ray(cam_pos, vec3(position.xy + randv2(1.5) / size, -1));
+                    vec4 dir = u_view * vec4(position.xy + randv2(1.) * inv_size, -h, 0);
+                    ray r = ray(cam_pos, dir.xyz);
                     gl_FragColor.rgb += color(r);
                 }
 
@@ -355,16 +367,86 @@ class qc_app {
             }`);
 
         this.shader.set_uniformf('u_viewport_size', [this.canvas.canvas.width, this.canvas.canvas.height]);
+        this.canvas.canvas.onmousemove = this.on_mouse_move.bind(this);
+        this.canvas.canvas.onmousedown = this.on_mouse_down.bind(this);
+        this.canvas.canvas.onmouseup   = this.on_mouse_up.bind(this);
+        document.onkeydown = this.on_key_down.bind(this);
+        document.onkeyup   = this.on_key_up.bind(this);
+    }
+
+    mouse_down = false;
+    on_mouse_up(ev: MouseEvent) {
+        this.mouse_down = false;
+    }
+    on_mouse_down(ev: MouseEvent) {
+        this.mouse_down = true;
+    }
+    on_mouse_move(ev: MouseEvent) {
+        if (!this.mouse_down) return;
+
+        const sens = .5;
+        this.cam_rotation.alter(v => {
+            v[1] -= ev.movementX * sens;
+            v[0] -= ev.movementY * sens;
+            return v;});
+    }
+
+    key_down: {[key:string]: boolean} = {};
+    on_key_down(ev: KeyboardEvent) {
+        this.key_down[ev.key] = true;
+    }
+    on_key_up(ev: KeyboardEvent) {
+        this.key_down[ev.key] = false;
     }
 
     do_update = new qu_attribute(true, this);
     rays_per_pixel = new qu_attribute(8, this);
+    fov = new qu_attribute(45, this);
+    cam_position = new qu_attribute(vec3.create(), this);
+    cam_rotation = new qu_attribute(vec3.create(), this);
+    cam_sens     = new qu_attribute(.1, this);
     app_start_time = Date.now();
+    cam_matrix     = mat4.create();
+    cam_quat       = quat.create();
+
+    update_camera() {
+        let [yaw, pitch, roll] = this.cam_rotation.get_value();
+        let cam_rotation = quat.fromEuler(this.cam_quat, yaw, pitch, roll);
+
+        if (this.key_down.w || this.key_down.s) {
+            this.cam_position.alter(v => {
+                const sens = this.cam_sens.get_value() * (this.key_down.w ? 1 : -1);
+                let dir = vec3.fromValues(0, 0, -1);
+                vec3.transformQuat(dir, dir, cam_rotation);
+                vec3.scale(dir, dir, sens);
+                vec3.add(v, v, dir);
+                return v;
+            });
+        }
+        if (this.key_down.a || this.key_down.d) {
+            this.cam_position.alter(v => {
+                const sens = this.cam_sens.get_value() * (this.key_down.d ? 1 : -1);
+                let dir = vec3.fromValues(1, 0, 0);
+                vec3.transformQuat(dir, dir, cam_rotation);
+                vec3.scale(dir, dir, sens);
+                vec3.add(v, v, dir);
+                return v;
+            });
+        }
+    }
 
     update() {
         if (this.do_update.get_value()) {
+            this.update_camera();
+
             this.shader.set_uniformf('u_time', [Date.now() - this.app_start_time]);
+            this.shader.set_uniformf('u_fov', [this.fov.get_value() / 2.]);
             this.shader.set_uniformf('u_rays_per_pixel', [this.rays_per_pixel.get_value()]);
+            this.shader.set_uniformf('u_view',
+                mat4.fromRotationTranslation(this.cam_matrix, 
+                    this.cam_quat, 
+                    this.cam_position.get_value()));
+
             this.render();
         }
         requestAnimationFrame(this.update.bind(this));
