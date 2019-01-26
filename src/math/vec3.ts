@@ -56,7 +56,7 @@ export function length(a) {
  * @param {Number} z Z component
  * @returns {vec3} a new 3D vector
  */
-export function fromValues(x, y, z) {
+export function fromValues(x, y = x, z = x) {
   let out = new glMatrix.ARRAY_TYPE(3);
   out[0] = x;
   out[1] = y;

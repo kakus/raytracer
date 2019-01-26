@@ -205,13 +205,12 @@ class qc_app {
             uniform vec2  u_viewport_size;
             uniform float u_fov;
             uniform mat4  u_view;
-            // uniform vec3  u_cam_position;
-            // uniform vec3  u_cam_
+            uniform float u_lens;
 
             float g_rand_idx = 1.;
-            highp float rand() {
-                const highp float a = 12.9898, b = 78.233, c = 43758.5453;
-                highp float dt = dot( fract(gl_FragCoord.xy * (g_rand_idx += .001)), vec2( a, b ) ), 
+            float rand() {
+                const float a = 12.9898, b = 78.233, c = 43758.5453;
+                float dt = dot( fract(gl_FragCoord.xy * (g_rand_idx += .001)), vec2( a, b ) ), 
                 // highp float dt = dot( gl_FragCoord.xy, vec2( a, b ) ), 
                             sn = mod( dt, PI );
                 return fract(sin(sn) * c);
@@ -229,6 +228,11 @@ class qc_app {
                 // return normalize(r) * pow(rand(), 1./3.);
                 return normalize(randv3(1.));
                 // return randv3(.5);
+            }
+
+            vec2 rand_point_on_circle() {
+                float alpha = rand() * PI;
+                return vec2(sin(alpha), cos(alpha));
             }
 
             struct ray { vec3 ori; vec3 dir; };
@@ -352,10 +356,13 @@ class qc_app {
                 // ray r = ray(cam_pos, vec3(position.xy, -h));
                 // gl_FragColor.rgb += color(r);
 
+
                 for (int i = 0; i < 128; ++i) {
                     if (--passes == 0) break;
-                    vec4 dir = u_view * vec4(position.xy + randv2(1.) * inv_size, -h, 0);
-                    ray r = ray(cam_pos, dir.xyz);
+                    vec2 lens = rand_point_on_circle() * rand() * u_lens;
+                    vec3 lens_p = (u_view * vec4(lens, 0, 0)).xyz;
+                    vec4 dir = u_view * vec4(position.xy + randv2(.9) * inv_size, -h, 0);
+                    ray r = ray(cam_pos + lens_p, dir.xyz - lens_p);
                     gl_FragColor.rgb += color(r);
                 }
 
@@ -399,12 +406,15 @@ class qc_app {
         this.key_down[ev.key] = false;
     }
 
-    do_update = new qu_attribute(true, this);
+    do_update    = new qu_attribute(true, this);
     rays_per_pixel = new qu_attribute(8, this);
-    fov = new qu_attribute(45, this);
+    fov          = new qu_attribute(45, this);
     cam_position = new qu_attribute(vec3.create(), this);
     cam_rotation = new qu_attribute(vec3.create(), this);
     cam_sens     = new qu_attribute(.1, this);
+    cam_lens     = new qu_attribute(0.01, this);
+    cam_focus_dist = new qu_attribute(1., this);
+
     app_start_time = Date.now();
     cam_matrix     = mat4.create();
     cam_quat       = quat.create();
@@ -442,10 +452,12 @@ class qc_app {
             this.shader.set_uniformf('u_time', [Date.now() - this.app_start_time]);
             this.shader.set_uniformf('u_fov', [this.fov.get_value() / 2.]);
             this.shader.set_uniformf('u_rays_per_pixel', [this.rays_per_pixel.get_value()]);
+            this.shader.set_uniformf('u_lens', [this.cam_lens.get_value()]);
             this.shader.set_uniformf('u_view',
-                mat4.fromRotationTranslation(this.cam_matrix, 
+                mat4.fromRotationTranslationScale(this.cam_matrix, 
                     this.cam_quat, 
-                    this.cam_position.get_value()));
+                    this.cam_position.get_value(),
+                    vec3.fromValues(this.cam_focus_dist.get_value())));
 
             this.render();
         }
