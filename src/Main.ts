@@ -4,6 +4,8 @@
 /// <reference path="math/vec4.ts" />
 /// <reference path="math/quat.ts" />
 /// <reference path="core/mesh.ts" />
+/// <reference path="core/texture.ts" />
+
 /// <reference path="loaders/obj-loader.ts" />
 
 
@@ -24,10 +26,10 @@ class qu_attribute<T> {
     static attribute_list: qu_attribute<any>[] = [];
     static on_new_attribute_event: Function;
 
-    public on_attribute_change_delegate = new qu_delegate();
+    public on_value_change_delegate = new qu_delegate();
 
     constructor(
-        private value: T,
+        private value_: T,
         private outer: any
     ) {
         qu_attribute.attribute_list.push(this);
@@ -37,15 +39,23 @@ class qu_attribute<T> {
     }
 
     get_value() { 
-        return this.value;
+        return this.value_;
     }
+    get value() {
+        return this.value_;
+    }
+
     set_value(in_value: T) { 
-        this.value = in_value; 
-        this.on_attribute_change_delegate.broadcast(this); 
-        return this.value;
+        this.value_ = in_value; 
+        this.on_value_change_delegate.broadcast(this); 
+        return this.value_;
      }
+    set value(in_value: T)  {
+        this.set_value(in_value);
+    }
+
     alter(fn: (val: T) => T) {
-        return this.set_value(fn(this.value));
+        return this.set_value(fn(this.value_));
     }
     get_outer() { return this.outer; }
     get_name() {
@@ -72,7 +82,7 @@ class qu_debug_explorer {
         let widget = document.createElement('div');
         widget.classList.add('debug-attribute');
         this.root.append(widget);
-        attribute.on_attribute_change_delegate.bind(
+        attribute.on_value_change_delegate.bind(
             this.on_attribute_changed.bind(this, widget));
         this.on_attribute_changed(widget, attribute);
     }
@@ -125,7 +135,25 @@ class qu_debug_explorer {
     }
 }
 
+function create_canvas(width: number, height: number, paint: (ctx: CanvasRenderingContext2D) => void) {
+    let canvas = document.createElement('canvas');
+    let ctx    = canvas.getContext('2d');
+    canvas.width  = width;
+    canvas.height = height;
+    paint(ctx);
+    return canvas;
+}
 
+function checkboard(width = 64, height = 64, rect = 4) {
+    return create_canvas(width, height, ctx => {
+        for (let x = 0; x < width; x += rect) {
+            for (let y = 0; y < height; y += rect) {
+                ctx.fillStyle = ((x + y) / rect) % 2 ? '#f00' : '#000';
+                ctx.fillRect(x, y, rect, rect);
+            }
+        }
+    });
+}
 
 
 
@@ -138,7 +166,7 @@ class qr_webgl_canvas {
         this.canvas = document.querySelector(canvas_id);
         this.gl     = this.canvas.getContext('webgl');
 
-        this.gl.enable(egl.DEPTH_TEST);
+        // this.gl.enable(egl.DEPTH_TEST);
     }
 
     public make_shader(vertex: string, fragment: string) {
@@ -172,15 +200,30 @@ class qr_webgl_canvas {
 
 class qc_app {
     canvas: qr_webgl_canvas;
-    shader: qr_webgl_shader;
+    raytracer_shader: qr_webgl_shader;
     debug_widget = new qu_debug_explorer();
     quad: qr_webgl_mesh = qr_webgl_mesh.make_quad();
+    texture_shader: qr_webgl_shader;
+    texture0: qu_texture;
+    texture1: qu_texture;
 
     init() {
         this.canvas = new qr_webgl_canvas('#canvas');
         // document.body.appendChild(this.canvas.canvas);
-
-        this.shader = this.canvas.make_shader(`
+        this.texture_shader = this.canvas.make_shader(`
+            attribute vec3 vertex;
+            varying vec4 position;
+            void main() {
+                gl_Position = position = vec4(vertex, 1.);
+            }`, `
+            precision highp float;
+            uniform sampler2D tex;
+            varying vec4 position;
+            void main() {
+                gl_FragColor = texture2D(tex, (position.xy + 1.) * .5);
+            }`);
+            
+        this.raytracer_shader = this.canvas.make_shader(`
             uniform vec2 u_viewport_size;
             attribute vec3 vertex;
             varying vec4 position;
@@ -200,6 +243,7 @@ class qc_app {
 
             varying vec4 position;
 
+            uniform float u_frame;
             uniform float u_time;
             uniform float u_rays_per_pixel;
             uniform vec2  u_viewport_size;
@@ -207,10 +251,12 @@ class qc_app {
             uniform mat4  u_view;
             uniform float u_lens;
 
+            uniform sampler2D u_prev;
+
             float g_rand_idx = 1.;
             float rand() {
                 const float a = 12.9898, b = 78.233, c = 43758.5453;
-                float dt = dot( fract(gl_FragCoord.xy * (g_rand_idx += .001)), vec2( a, b ) ), 
+                float dt = dot( fract(gl_FragCoord.xy * (g_rand_idx += .001) + (u_time/1000.)), vec2( a, b ) ), 
                 // highp float dt = dot( gl_FragCoord.xy, vec2( a, b ) ), 
                             sn = mod( dt, PI );
                 return fract(sin(sn) * c);
@@ -320,12 +366,23 @@ class qc_app {
                 return vec3(0);
             }
 
+            bool my_refract(inout vec3 v, const vec3 n, const float ni_over_nt) {
+                vec3 uv = normalize(v);
+                float dt = dot(uv, n);
+                float discriminant = 1. - ni_over_nt * ni_over_nt * (1. - dt * dt);
+                if (discriminant > 0.) {
+                    v = ni_over_nt * (uv - n * dt) - n * sqrt(discriminant);
+                    return true;
+                }
+                return false;
+            }
+
             vec3 color(ray r) {
                 hit_result hit;
                 vec3 attenuation = vec3(1);
                 vec3 color = vec3(0);
 
-                for (int i = 0; i < 4; ++i) {
+                for (int i = 0; i < 8; ++i) {
                     if (hit_spheres(r, hit)) {
                         vec3 att = vec3(1);
                         attenuation *= scatter(r, hit);
@@ -342,7 +399,7 @@ class qc_app {
             }
 
             void main() {
-                spheres[0] = sphere(vec3( 0, sin(u_time*.0005), -1), .5, tmaterial(0, vec3(.8, .3, .3), 0.));
+                spheres[0] = sphere(vec3( 0, 0, -1), .5, tmaterial(0, vec3(.8, .3, .3), 0.));
                 spheres[1] = sphere(vec3(-1, 0, -1),                 .5, tmaterial(1, vec3(.8, .6, .2), 0.5));
                 spheres[2] = sphere(vec3( 1, 0, -1),                 .5, tmaterial(1, vec3(.8, .8, .8), 0.));
                 spheres[3] = sphere(vec3(0, -100.5, -1),           100., tmaterial(0, vec3(.8, .8,  0), 0.));
@@ -357,28 +414,45 @@ class qc_app {
                 // gl_FragColor.rgb += color(r);
 
 
-                for (int i = 0; i < 128; ++i) {
-                    if (--passes == 0) break;
+                // for (int i = 0; i < 1; ++i) {
+                    // if (--passes == 0) break;
                     vec2 lens = rand_point_on_circle() * rand() * u_lens;
                     vec3 lens_p = (u_view * vec4(lens, 0, 0)).xyz;
                     vec4 dir = u_view * vec4(position.xy + randv2(.9) * inv_size, -h, 0);
                     ray r = ray(cam_pos + lens_p, dir.xyz - lens_p);
-                    gl_FragColor.rgb += color(r);
-                }
 
-                gl_FragColor.rgb /= float(u_rays_per_pixel);
-                gl_FragColor.rgb = sqrt(gl_FragColor.rgb);
+                    // if (u_frame == 1.) {
+                        gl_FragColor.rgb = color(r) / u_frame;
+                    // }
+                    if (u_frame > 1.) {
+                        gl_FragColor.rgb += (u_frame - 1.) * texture2D(u_prev, gl_FragCoord.xy/u_viewport_size).rgb / u_frame;
+                        // gl_FragColor.rgb = texture2D(u_prev, gl_FragCoord.xy/u_viewport_size).rgb;
+                    }
+                // }
 
-                // gl_FragColor.xyz = vec3(rand());
+                // gl_FragColor.rgb /= float(u_rays_per_pixel);
+                // gl_FragColor.rgb = sqrt(gl_FragColor.rgb);
+                // gl_FragColor.xyz += vec3(rand(), rand(), rand());
                 gl_FragColor.a = 1.;
             }`);
 
-        this.shader.set_uniformf('u_viewport_size', [this.canvas.canvas.width, this.canvas.canvas.height]);
+        let { width, height } = this.canvas.canvas;
+        this.raytracer_shader.set_uniformf('u_viewport_size', [width, height]);
+        // this.texture0 = qu_texture.from_image(this.canvas.gl, checkboard(), {});
+        this.texture0 = new qu_texture(this.canvas.gl, width, height, {});
+        this.texture1 = new qu_texture(this.canvas.gl, width, height, {});
+
         this.canvas.canvas.onmousemove = this.on_mouse_move.bind(this);
         this.canvas.canvas.onmousedown = this.on_mouse_down.bind(this);
         this.canvas.canvas.onmouseup   = this.on_mouse_up.bind(this);
         document.onkeydown = this.on_key_down.bind(this);
         document.onkeyup   = this.on_key_up.bind(this);
+
+        for (let attr of qu_attribute.attribute_list) {
+            if (attr != this.frame_idx) {
+                attr.on_value_change_delegate.bind(() => this.frame_idx.value = 0);
+            }
+        }
     }
 
     mouse_down = false;
@@ -414,6 +488,7 @@ class qc_app {
     cam_sens     = new qu_attribute(.1, this);
     cam_lens     = new qu_attribute(0.01, this);
     cam_focus_dist = new qu_attribute(1., this);
+    frame_idx      = new qu_attribute(0, this);
 
     app_start_time = Date.now();
     cam_matrix     = mat4.create();
@@ -446,29 +521,44 @@ class qc_app {
     }
 
     update() {
-        if (this.do_update.get_value()) {
+        if (this.do_update.value) {
             this.update_camera();
+            this.frame_idx.value += 1;
 
-            this.shader.set_uniformf('u_time', [Date.now() - this.app_start_time]);
-            this.shader.set_uniformf('u_fov', [this.fov.get_value() / 2.]);
-            this.shader.set_uniformf('u_rays_per_pixel', [this.rays_per_pixel.get_value()]);
-            this.shader.set_uniformf('u_lens', [this.cam_lens.get_value()]);
-            this.shader.set_uniformf('u_view',
+            this.raytracer_shader.set_uniformf('u_frame', [this.frame_idx.value]);
+            this.raytracer_shader.set_uniformf('u_time', [Date.now() - this.app_start_time]);
+            this.raytracer_shader.set_uniformf('u_fov', [this.fov.get_value() / 2.]);
+            this.raytracer_shader.set_uniformf('u_rays_per_pixel', [this.rays_per_pixel.get_value()]);
+            this.raytracer_shader.set_uniformf('u_lens', [this.cam_lens.get_value()]);
+            this.raytracer_shader.set_uniformf('u_view',
                 mat4.fromRotationTranslationScale(this.cam_matrix, 
                     this.cam_quat, 
                     this.cam_position.get_value(),
                     vec3.fromValues(this.cam_focus_dist.get_value())));
 
-            this.render();
+            if (this.frame_idx.value < 400) {
+                this.render();
+            }
         }
         requestAnimationFrame(this.update.bind(this));
     }
 
     draw_lines = new qu_attribute(false, this);
+    flip = false;
 
     render() {
-        this.canvas.clear();
-        this.shader.draw_mesh(
+        // this.canvas.clear();
+        let prev = this.flip ? this.texture0 : this.texture1;
+        let next = this.flip ? this.texture1 : this.texture0; 
+        this.flip = !this.flip;
+
+        prev.bind();
+        next.paint(() => {
+            this.raytracer_shader.draw_mesh(this.quad, 'triangles');
+        })
+
+        next.bind();
+        this.texture_shader.draw_mesh(
             this.quad,
             this.draw_lines.get_value() ? 'lines' : 'triangles');
     }
