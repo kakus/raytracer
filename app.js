@@ -4836,6 +4836,7 @@ class qc_app {
         this.mouse_down = false;
         this.last_touch_pos = [0, 0];
         this.key_down = {};
+        this.viewport_size = new qu_attribute(vec3.fromValues(256, 128, 1), this);
         this.do_update = new qu_attribute(true, this);
         this.rays_per_pixel = new qu_attribute(1, this);
         this.fov = new qu_attribute(45, this);
@@ -5076,10 +5077,6 @@ class qc_app {
                 gl_FragColor.a = 1.;
             }`);
         const canvas = this.webgl_viewport.canvas;
-        let { width, height } = canvas;
-        this.raytracer_shader.set_uniformf('u_viewport_size', [width, height]);
-        this.texture0 = new qu_texture(this.webgl_viewport.gl, width, height, {});
-        this.texture1 = new qu_texture(this.webgl_viewport.gl, width, height, {});
         canvas.onmousemove = this.on_mouse_move.bind(this);
         canvas.onmousedown = this.on_mouse_down.bind(this);
         canvas.onmouseup = this.on_mouse_up.bind(this);
@@ -5093,6 +5090,8 @@ class qc_app {
                 attr.on_value_change_delegate.bind(() => this.frame_idx.value = 0);
             }
         }
+        this.on_resize();
+        this.viewport_size.on_value_change_delegate.bind(this.on_resize.bind(this));
     }
     on_mouse_up(ev) {
         this.mouse_down = false;
@@ -5128,6 +5127,16 @@ class qc_app {
     }
     on_key_up(ev) {
         this.key_down[ev.key] = false;
+    }
+    on_resize() {
+        const canvas = this.webgl_viewport.canvas;
+        let [width, height, scale] = this.viewport_size.value;
+        width = canvas.width = width * scale;
+        height = canvas.height = height * scale;
+        this.webgl_viewport.gl.viewport(0, 0, width, height);
+        this.raytracer_shader.set_uniformf('u_viewport_size', [width, height]);
+        this.texture0 = new qu_texture(this.webgl_viewport.gl, width, height, {});
+        this.texture1 = new qu_texture(this.webgl_viewport.gl, width, height, {});
     }
     update_camera() {
         let [yaw, pitch, roll] = this.cam_rotation.get_value();
