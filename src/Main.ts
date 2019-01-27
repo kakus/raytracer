@@ -157,7 +157,7 @@ function checkboard(width = 64, height = 64, rect = 4) {
 
 
 
-class qr_webgl_canvas {
+class qr_webgl_viewport {
 
     canvas: HTMLCanvasElement;
     gl: WebGLRenderingContext;
@@ -199,18 +199,18 @@ class qr_webgl_canvas {
 }
 
 class qc_app {
-    canvas: qr_webgl_canvas;
-    raytracer_shader: qr_webgl_shader;
     debug_widget = new qu_debug_explorer();
+    webgl_viewport: qr_webgl_viewport;
+    raytracer_shader: qr_webgl_shader;
     quad: qr_webgl_mesh = qr_webgl_mesh.make_quad();
     texture_shader: qr_webgl_shader;
     texture0: qu_texture;
     texture1: qu_texture;
 
     init() {
-        this.canvas = new qr_webgl_canvas('#canvas');
+        this.webgl_viewport = new qr_webgl_viewport('#canvas');
         // document.body.appendChild(this.canvas.canvas);
-        this.texture_shader = this.canvas.make_shader(`
+        this.texture_shader = this.webgl_viewport.make_shader(`
             attribute vec3 vertex;
             varying vec4 position;
             void main() {
@@ -223,7 +223,7 @@ class qc_app {
                 gl_FragColor = texture2D(tex, (position.xy + 1.) * .5);
             }`);
             
-        this.raytracer_shader = this.canvas.make_shader(`
+        this.raytracer_shader = this.webgl_viewport.make_shader(`
             uniform vec2 u_viewport_size;
             attribute vec3 vertex;
             varying vec4 position;
@@ -410,25 +410,25 @@ class qc_app {
 
                 float h = 0.5 / tan(radians(u_fov));
 
-                // ray r = ray(cam_pos, vec3(position.xy, -h));
-                // gl_FragColor.rgb += color(r);
-
-
-                // for (int i = 0; i < 1; ++i) {
-                    // if (--passes == 0) break;
+                for (int i = 0; i < 128; ++i) {
                     vec2 lens = rand_point_on_circle() * rand() * u_lens;
                     vec3 lens_p = (u_view * vec4(lens, 0, 0)).xyz;
                     vec4 dir = u_view * vec4(position.xy + randv2(.9) * inv_size, -h, 0);
                     ray r = ray(cam_pos + lens_p, dir.xyz - lens_p);
-
-                    // if (u_frame == 1.) {
-                        gl_FragColor.rgb = color(r) / u_frame;
-                    // }
-                    if (u_frame > 1.) {
-                        gl_FragColor.rgb += (u_frame - 1.) * texture2D(u_prev, gl_FragCoord.xy/u_viewport_size).rgb / u_frame;
-                        // gl_FragColor.rgb = texture2D(u_prev, gl_FragCoord.xy/u_viewport_size).rgb;
+                    gl_FragColor.rgb += color(r);
+                    if (--passes == 0) {
+                        gl_FragColor.rgb /= u_rays_per_pixel;
+                        break;
                     }
-                // }
+                    if (u_frame > 1.) {
+                        break;
+                    }
+                }
+
+                if (u_frame > 1.) {
+                    gl_FragColor.rgb /= u_frame;
+                    gl_FragColor.rgb += (u_frame - 1.) * texture2D(u_prev, gl_FragCoord.xy/u_viewport_size).rgb / u_frame;
+                }
 
                 // gl_FragColor.rgb /= float(u_rays_per_pixel);
                 // gl_FragColor.rgb = sqrt(gl_FragColor.rgb);
@@ -436,15 +436,18 @@ class qc_app {
                 gl_FragColor.a = 1.;
             }`);
 
-        let { width, height } = this.canvas.canvas;
+        const canvas = this.webgl_viewport.canvas;
+        let { width, height } = canvas; 
         this.raytracer_shader.set_uniformf('u_viewport_size', [width, height]);
-        // this.texture0 = qu_texture.from_image(this.canvas.gl, checkboard(), {});
-        this.texture0 = new qu_texture(this.canvas.gl, width, height, {});
-        this.texture1 = new qu_texture(this.canvas.gl, width, height, {});
+        this.texture0 = new qu_texture(this.webgl_viewport.gl, width, height, {});
+        this.texture1 = new qu_texture(this.webgl_viewport.gl, width, height, {});
 
-        this.canvas.canvas.onmousemove = this.on_mouse_move.bind(this);
-        this.canvas.canvas.onmousedown = this.on_mouse_down.bind(this);
-        this.canvas.canvas.onmouseup   = this.on_mouse_up.bind(this);
+        canvas.onmousemove = this.on_mouse_move.bind(this);
+        canvas.onmousedown = this.on_mouse_down.bind(this);
+        canvas.onmouseup   = this.on_mouse_up.bind(this);
+        canvas.ontouchstart= this.on_touch_start.bind(this);
+        // canvas.ontouchend  = this.on_touch_end.bind(this);
+        canvas.ontouchmove = this.on_touch_move.bind(this);
         document.onkeydown = this.on_key_down.bind(this);
         document.onkeyup   = this.on_key_up.bind(this);
 
@@ -472,6 +475,24 @@ class qc_app {
             return v;});
     }
 
+    last_touch_pos = [0, 0];
+    on_touch_start(ev: TouchEvent) {
+        this.last_touch_pos = [ev.touches[0].clientX, ev.touches[0].clientY];
+    }
+    on_touch_move(ev: TouchEvent) {
+        let x = ev.touches[0].clientX,
+            y = ev.touches[0].clientY;
+
+        this.cam_rotation.alter(v => {
+            v[1] -= x - this.last_touch_pos[0];
+            v[0] -= y - this.last_touch_pos[1];
+            return v;
+        });
+
+        this.last_touch_pos = [x, y];
+        ev.preventDefault();
+    }
+
     key_down: {[key:string]: boolean} = {};
     on_key_down(ev: KeyboardEvent) {
         this.key_down[ev.key] = true;
@@ -481,7 +502,7 @@ class qc_app {
     }
 
     do_update    = new qu_attribute(true, this);
-    rays_per_pixel = new qu_attribute(8, this);
+    rays_per_pixel = new qu_attribute(1, this);
     fov          = new qu_attribute(45, this);
     cam_position = new qu_attribute(vec3.create(), this);
     cam_rotation = new qu_attribute(vec3.create(), this);
@@ -543,9 +564,7 @@ class qc_app {
         requestAnimationFrame(this.update.bind(this));
     }
 
-    draw_lines = new qu_attribute(false, this);
     flip = false;
-
     render() {
         // this.canvas.clear();
         let prev = this.flip ? this.texture0 : this.texture1;
@@ -558,9 +577,7 @@ class qc_app {
         })
 
         next.bind();
-        this.texture_shader.draw_mesh(
-            this.quad,
-            this.draw_lines.get_value() ? 'lines' : 'triangles');
+        this.texture_shader.draw_mesh(this.quad, 'triangles');
     }
 
     loop() {
