@@ -437,10 +437,6 @@ class qc_app {
             }`);
 
         const canvas = this.webgl_viewport.canvas;
-        let { width, height } = canvas; 
-        this.raytracer_shader.set_uniformf('u_viewport_size', [width, height]);
-        this.texture0 = new qu_texture(this.webgl_viewport.gl, width, height, {});
-        this.texture1 = new qu_texture(this.webgl_viewport.gl, width, height, {});
 
         canvas.onmousemove = this.on_mouse_move.bind(this);
         canvas.onmousedown = this.on_mouse_down.bind(this);
@@ -456,6 +452,9 @@ class qc_app {
                 attr.on_value_change_delegate.bind(() => this.frame_idx.value = 0);
             }
         }
+
+        this.on_resize();
+        this.viewport_size.on_value_change_delegate.bind(this.on_resize.bind(this));
     }
 
     mouse_down = false;
@@ -501,6 +500,7 @@ class qc_app {
         this.key_down[ev.key] = false;
     }
 
+    viewport_size= new qu_attribute(vec3.fromValues(256, 128, 1), this);
     do_update    = new qu_attribute(true, this);
     rays_per_pixel = new qu_attribute(1, this);
     fov          = new qu_attribute(45, this);
@@ -514,6 +514,17 @@ class qc_app {
     app_start_time = Date.now();
     cam_matrix     = mat4.create();
     cam_quat       = quat.create();
+
+    on_resize() {
+        const canvas = this.webgl_viewport.canvas;
+        let [width, height, scale] = this.viewport_size.value;
+        width  = canvas.width  = width * scale;
+        height = canvas.height = height * scale;
+        this.webgl_viewport.gl.viewport(0, 0, width, height);
+        this.raytracer_shader.set_uniformf('u_viewport_size', [width, height]);
+        this.texture0 = new qu_texture(this.webgl_viewport.gl, width, height, {});
+        this.texture1 = new qu_texture(this.webgl_viewport.gl, width, height, {}); 
+    }
 
     update_camera() {
         let [yaw, pitch, roll] = this.cam_rotation.get_value();
