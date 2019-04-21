@@ -350,6 +350,12 @@ class qc_app {
                 return b_hit;
             }
 
+            float schlick(float cosine, float ref_idx) {
+                float r0 = (1. - ref_idx) / (1. + ref_idx);
+                r0 = r0 * r0;
+                return r0 + (1. - r0) * pow(1. - cosine, 5.);
+            }
+
             vec3 scatter(inout ray r, const hit_result hit) {
                 // lambertian
                 if (hit.m.type == 0) {
@@ -366,18 +372,26 @@ class qc_app {
                 // diaelectric (glass)
                 else if (hit.m.type == 2) {
                     vec3 n = hit.n;
-                    float ni = 1. / 1.5;
-                    if (dot(r.dir, hit.n) > 0.) {
+                    const float ref_idx = 1.45;
+                    float ni = 1. / ref_idx;
+                    float hit_dot = dot(r.dir, hit.n);
+                    float cosine = -hit_dot / length(r.dir);
+
+                    if (hit_dot > 0.) {
                         n = -n;
                         ni = 1. / ni;
+                        cosine *= -ref_idx;
                     }
 
-                    vec3 rref = refract(r.dir, n, ni);
-                    if (dot(rref, rref) != 0.) {
-                        r = ray(hit.p, rref);
-                    } else {
-                        r = ray(hit.p, reflect(normalize(r.dir), hit.n));
+                    vec3 refracted = refract(r.dir, n, ni);
+                    if (dot(refracted, refracted) != 0.) {
+                        if (rand() > schlick(cosine, ref_idx)) {
+                            r = ray(hit.p, refracted);
+                            return hit.m.albedo;
+                        }
                     }
+
+                    r = ray(hit.p, reflect(normalize(r.dir), hit.n));
                     return hit.m.albedo;
                 }
                 return vec3(0);
@@ -416,10 +430,10 @@ class qc_app {
             }
 
             void main() {
-                spheres[0] = sphere(vec3( 0, 0, -1), .5, tmaterial(0, vec3(.8, .3, .3), 0.));
-                spheres[1] = sphere(vec3(-1, 0, -1),                 .5, tmaterial(2, vec3(1., 1., 1.), 0.5));
-                spheres[2] = sphere(vec3( 1, 0, -1),                 .5, tmaterial(1, vec3(.8, .8, .8), 0.));
-                spheres[3] = sphere(vec3(0, -100.5, -1),           100., tmaterial(0, vec3(.8, .8,  0), 0.));
+                spheres[0] = sphere(vec3( 0, 0, 0), .5, tmaterial(0, vec3(.8, .3, .3), 0.));
+                spheres[1] = sphere(vec3(-1.1, 0, 0),                 .5, tmaterial(2, vec3(1., 1., 1.), 0.5));
+                spheres[2] = sphere(vec3( 1.1, 0, 0),                 .5, tmaterial(1, vec3(.8, .8, .8), 0.));
+                spheres[3] = sphere(vec3(0, -100.5, 0),           100., tmaterial(0, vec3(.8, .8,  0), 0.));
 
                 vec2 inv_size = 1. / u_viewport_size;
                 vec3 cam_pos = (u_view * vec4(0, 0, 0, 1)).xyz;
@@ -521,11 +535,12 @@ class qc_app {
     do_update    = new qu_attribute(true, this);
     rays_per_pixel = new qu_attribute(1, this);
     fov          = new qu_attribute(45, this);
-    cam_position = new qu_attribute(vec3.create(), this);
+    cam_position = new qu_attribute(vec3.fromValues(0, 0, 1), this);
     cam_rotation = new qu_attribute(vec3.create(), this);
     cam_sens     = new qu_attribute(.1, this);
     cam_lens     = new qu_attribute(0., this);
     cam_focus_dist = new qu_attribute(1., this);
+    cam_orbit    = new qu_attribute(false, this);
     frame_idx      = new qu_attribute(0, this);
 
     app_start_time = Date.now();
@@ -546,6 +561,19 @@ class qc_app {
     update_camera() {
         let [yaw, pitch, roll] = this.cam_rotation.get_value();
         let cam_rotation = quat.fromEuler(this.cam_quat, yaw, pitch, roll);
+
+        if (this.cam_orbit.get_value()) {
+            this.cam_position.alter(v => {
+                vec3.rotateY(v, v, vec3.create(), 0.01);
+                return v;
+            })
+            this.cam_rotation.alter(v => {
+                let p = this.cam_position.value;
+                v[1] = Math.atan2(p[0], p[2]) * (180.0/Math.PI);
+                return v;
+            })
+            return;
+        }
 
         if (this.key_down.w || this.key_down.s) {
             this.cam_position.alter(v => {
