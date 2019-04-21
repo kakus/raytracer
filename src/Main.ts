@@ -363,6 +363,23 @@ class qc_app {
                     r = ray(hit.p, t + rand_point_in_sphere() * hit.m.fuz);
                     return hit.m.albedo;
                 }
+                // diaelectric (glass)
+                else if (hit.m.type == 2) {
+                    vec3 n = hit.n;
+                    float ni = 1. / 1.5;
+                    if (dot(r.dir, hit.n) > 0.) {
+                        n = -n;
+                        ni = 1. / ni;
+                    }
+
+                    vec3 rref = refract(r.dir, n, ni);
+                    if (dot(rref, rref) != 0.) {
+                        r = ray(hit.p, rref);
+                    } else {
+                        r = ray(hit.p, reflect(normalize(r.dir), hit.n));
+                    }
+                    return hit.m.albedo;
+                }
                 return vec3(0);
             }
 
@@ -400,7 +417,7 @@ class qc_app {
 
             void main() {
                 spheres[0] = sphere(vec3( 0, 0, -1), .5, tmaterial(0, vec3(.8, .3, .3), 0.));
-                spheres[1] = sphere(vec3(-1, 0, -1),                 .5, tmaterial(1, vec3(.8, .6, .2), 0.5));
+                spheres[1] = sphere(vec3(-1, 0, -1),                 .5, tmaterial(2, vec3(1., 1., 1.), 0.5));
                 spheres[2] = sphere(vec3( 1, 0, -1),                 .5, tmaterial(1, vec3(.8, .8, .8), 0.));
                 spheres[3] = sphere(vec3(0, -100.5, -1),           100., tmaterial(0, vec3(.8, .8,  0), 0.));
 
@@ -507,7 +524,7 @@ class qc_app {
     cam_position = new qu_attribute(vec3.create(), this);
     cam_rotation = new qu_attribute(vec3.create(), this);
     cam_sens     = new qu_attribute(.1, this);
-    cam_lens     = new qu_attribute(0.01, this);
+    cam_lens     = new qu_attribute(0., this);
     cam_focus_dist = new qu_attribute(1., this);
     frame_idx      = new qu_attribute(0, this);
 
