@@ -9,33 +9,70 @@
 /// <reference path="loaders/obj-loader.ts" />
 
 
-
-class qu_delegate {
-    private listeners: Function[] = [];
-    bind(callback: Function) {
+class qu_delegate_handle<T extends Function> {
+    constructor(
+        public fn_: T,
+        public event_: qu_multicast_event<T>
+    ) { }
+    unbind() {
+        this.event_.remove(this);
+        this.event_ = undefined;
+        this.fn_ = undefined;
+    }
+}
+class qu_multicast_event<TDelegate extends Function = () => void> {
+    private listeners: TDelegate[] = [];
+    bind(callback: TDelegate) {
         this.listeners.push(callback);
+        return new qu_delegate_handle(callback, this);
+    }
+    remove(handle: qu_delegate_handle<TDelegate>) {
+        this.listeners.splice(this.listeners.indexOf(handle.fn_), 1);        
     }
     broadcast(...payload: any) {
         for (let listener of this.listeners) {
-            listener(...payload);
+            (<any>listener)(...payload);
         }
     }
 }
 
-class qu_attribute<T> {
-    static attribute_list: qu_attribute<any>[] = [];
-    static on_new_attribute_event: Function;
+function qu_make_attr<T>(val: T | T[], outer: any, default_ctor?: new () => T) {
+    if (val instanceof Array) {
+        return new qu_array_attribute(val, outer, default_ctor);
+    } else {
+        return new qu_attribute(val, outer, default_ctor)
+    }
+}
 
-    public on_value_change_delegate = new qu_delegate();
+class qu_attribute<T> {
+    // all attributes, also arrays
+    static g_list: qu_attribute<any>[] = [];
+    static g_array_list: qu_array_attribute<any>[] = [];
+    static on_new_attribute_delegate: Function;
+
+    public on_value_change_event = new qu_multicast_event<(attr: this) => void>();
 
     constructor(
         private value_: T,
-        private outer: any
+        private outer: any,
+        private default_ctor?: new () => T
     ) {
-        qu_attribute.attribute_list.push(this);
-        if (qu_attribute.on_new_attribute_event) {
-            setTimeout(qu_attribute.on_new_attribute_event.bind(undefined, this), 0);
+        qu_attribute.g_list.push(this);
+
+        // for (let array of qu_attribute.g_array_list) {
+        //     let idx = array.value.findIndex(e => e === outer);
+        //     if (idx >= 0) {
+        //         array.childs.splice(idx, 0, this);
+        //     }
+        // }
+
+        if (qu_attribute.on_new_attribute_delegate) {
+            setTimeout(() => qu_attribute.on_new_attribute_delegate(this), 0);
         }
+    }
+
+    new_default(): T {
+        return new this.default_ctor();
     }
 
     get_value() { 
@@ -47,7 +84,7 @@ class qu_attribute<T> {
 
     set_value(in_value: T) { 
         this.value_ = in_value; 
-        this.on_value_change_delegate.broadcast(this); 
+        this.on_value_change_event.broadcast(this); 
         return this.value_;
      }
     set value(in_value: T)  {
@@ -57,7 +94,11 @@ class qu_attribute<T> {
     alter(fn: (val: T) => T) {
         return this.set_value(fn(this.value_));
     }
-    get_outer() { return this.outer; }
+
+    get_outer() { 
+        return this.outer;
+    }
+
     get_name() {
         let outer_name = this.outer.constructor.name;
         for (let prop in this.outer) {
@@ -67,24 +108,93 @@ class qu_attribute<T> {
     }
 }
 
+class qu_array_attribute<T> extends qu_attribute<T[]> {
+    childs: qu_attribute<any>[] = [];
+    constructor(value_: T[], outer: any, private element_default_ctor?: new () => T) {
+        super(value_, outer);
+
+        for (let attr of qu_attribute.g_list) {
+            if (value_.find(e => e === attr.get_outer())) {
+                this.childs.push(attr);
+            }
+        }
+    }
+    new_default_element(): T {
+        return new this.element_default_ctor();
+    } 
+}
+
 class qu_debug_explorer {
 
     root: HTMLDivElement;
+    attr_widget_list: HTMLDivElement[] = [];
+    attr_delegate_list: qu_delegate_handle<any>[] = [];
 
     constructor() {
         this.root = document.createElement('div');
         this.root.classList.add('debug-root');
         document.body.append(this.root);
-        qu_attribute.on_new_attribute_event = this.on_new_attribute.bind(this);
+        qu_attribute.on_new_attribute_delegate = this.on_new_attribute.bind(this);
     }
-    
+
+    get_parent_widget(attribute: qu_attribute<any>) {
+        let parentIdx = qu_attribute.g_list.findIndex(attr => {
+            let val = attr.value;
+            if (val instanceof Array) {
+                return val.find(e => e === attribute.get_outer());
+            } 
+            return false;
+        });
+        return this.attr_widget_list[parentIdx];
+    }
+
     on_new_attribute(attribute: qu_attribute<any>) {
+        let widget = this.create_attribute_widget(attribute, this.get_parent_widget(attribute));
+
+        if (attribute.value instanceof Array) {
+            let childs = [];
+            for (let g_idx = 0; g_idx < qu_attribute.g_list.length; ++g_idx) {
+                let attr = qu_attribute.g_list[g_idx];
+                let attr_idx = attribute.value.findIndex(e => e === attr.get_outer());
+                if (attr_idx >= 0) {
+                    childs.push(g_idx);
+                }
+            }
+
+            let non_child = widget.nextSibling;
+            for (let g_idx of childs.sort()) {
+                let child_widget = this.attr_widget_list[g_idx];
+                if (child_widget) {
+                    this.root.insertBefore(child_widget, non_child);
+                    child_widget.classList.add('array-element');
+                    non_child = child_widget.nextSibling;
+                }
+            }
+        }
+    }
+
+    create_attribute_widget(attribute: qu_attribute<any>, parent?: HTMLDivElement) {
         let widget = document.createElement('div');
+
         widget.classList.add('debug-attribute');
-        this.root.append(widget);
-        attribute.on_value_change_delegate.bind(
+        if (parent) {
+            let non_array_attr = parent.nextElementSibling;
+            while (non_array_attr.classList.contains('array-element')) { 
+                non_array_attr = non_array_attr.nextElementSibling;
+            }
+            this.root.insertBefore(widget, non_array_attr);
+            widget.classList.add('array-element');
+        } else {
+            this.root.append(widget);
+        }
+
+        let handle = attribute.on_value_change_event.bind(
             this.on_attribute_changed.bind(this, widget));
+
+        this.attr_delegate_list.push(handle);
+        this.attr_widget_list.push(widget);
         this.on_attribute_changed(widget, attribute);
+        return widget;
     }
 
     on_attribute_changed(widget: HTMLDivElement, attribute: qu_attribute<any>) {
@@ -128,6 +238,14 @@ class qu_debug_explorer {
                 input.classList.add('attribute-value');
                 widget.append(input);
             }
+        } else if (attribute instanceof qu_array_attribute) {
+            let button = document.createElement('input');
+            button.type = 'button';
+            button.value = `+`;
+            button.classList.add('attribute-value');
+            button.onclick = () => attribute.alter(v => (v.push(attribute.new_default_element()), v));
+            widget.innerHTML = `<div class='attribute-name'>${attribute.get_name()}</div>`;
+            widget.append(button);
         } else {
             widget.innerText = 
                 `${attribute.get_name()}: ${attribute.get_value()}`;
@@ -198,14 +316,26 @@ class qr_webgl_viewport {
     }
 }
 
+class qu_sphere {
+    pos    = new qu_attribute(vec3.create(), this);
+    radius = new qu_attribute(1., this);
+
+    constructor([x, y, z] = [0, 0, 0], in_radious = 1.) {
+        this.pos.set_value(vec3.fromValues(x, y, z));
+        this.radius.set_value(in_radious);
+    }
+}
+
+let debug_widget = new qu_debug_explorer();
+
 class qc_app {
-    debug_widget = new qu_debug_explorer();
     webgl_viewport: qr_webgl_viewport;
     raytracer_shader: qr_webgl_shader;
     quad: qr_webgl_mesh = qr_webgl_mesh.make_quad();
     texture_shader: qr_webgl_shader;
     texture0: qu_texture;
     texture1: qu_texture;
+    spheres = new qu_array_attribute([new qu_sphere()], this, qu_sphere);
 
     init() {
         this.webgl_viewport = new qr_webgl_viewport('#canvas');
@@ -478,14 +608,14 @@ class qc_app {
         document.onkeydown = this.on_key_down.bind(this);
         document.onkeyup   = this.on_key_up.bind(this);
 
-        for (let attr of qu_attribute.attribute_list) {
+        for (let attr of qu_attribute.g_list) {
             if (attr != this.frame_idx) {
-                attr.on_value_change_delegate.bind(() => this.frame_idx.value = 0);
+                attr.on_value_change_event.bind(() => this.frame_idx.value = 0);
             }
         }
 
         this.on_resize();
-        this.viewport_size.on_value_change_delegate.bind(this.on_resize.bind(this));
+        this.viewport_size.on_value_change_event.bind(this.on_resize.bind(this));
     }
 
     mouse_down = false;
