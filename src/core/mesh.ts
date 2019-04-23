@@ -129,6 +129,9 @@ class qr_webgl_shader {
             draw_type == 'triangles' ? egl.TRIANGLES : egl.LINES);
     }
 
+    set_uniformi(name: string, data: number | number[]) {
+        this.uniforms[name] = new Uint16Array(data instanceof Array ? data : [data]);
+    }
     set_uniformf(name: string, data: number[]) {
         this.uniforms[name] = new Float32Array(data);
     }
@@ -143,13 +146,15 @@ class qr_webgl_shader {
             }
             this.uniforms_locations[uniform_name] = location;
 
-            let uniform = this.uniforms[uniform_name];
-            if (uniform instanceof Float32Array) {
-                if (uniform.length <= 4) {
-                    gl[`uniform${uniform.length}fv`](location, uniform);
+            let u_data_array = this.uniforms[uniform_name];
+            if (u_data_array instanceof Float32Array) {
+                if (u_data_array.length <= 4) {
+                    gl[`uniform${u_data_array.length}fv`](location, u_data_array);
                 } else {
-                    gl[`uniformMatrix${uniform.length/4}fv`](location, false, uniform);
+                    gl[`uniformMatrix${u_data_array.length/4}fv`](location, false, u_data_array);
                 }
+            } else if (u_data_array instanceof Uint16Array) {
+                gl[`uniform${u_data_array.length}iv`](location, u_data_array);
             } else {
                 throw new Error(`unsupported`);
             }
@@ -170,8 +175,8 @@ class qr_webgl_shader {
             }
 
             buffer.bind_and_upload(gl);
-            gl.enableVertexAttribArray(location);
             gl.vertexAttribPointer(location, buffer.get_element_size(), egl.FLOAT, false, 0, 0);
+            gl.enableVertexAttribArray(location);
         } 
     }
 

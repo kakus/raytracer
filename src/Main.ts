@@ -342,16 +342,19 @@ class qc_app {
         // document.body.appendChild(this.canvas.canvas);
         this.texture_shader = this.webgl_viewport.make_shader(`
             attribute vec3 vertex;
-            varying vec4 position;
+            varying vec2 position;
             void main() {
-                gl_Position = position = vec4(vertex, 1.);
+                position = vertex.xy;
+                gl_Position =  vec4(vertex, 1.);
             }`, `
-            precision highp float;
+            precision lowp float;
             uniform sampler2D tex;
-            varying vec4 position;
+            varying vec2 position;
             void main() {
-                gl_FragColor = texture2D(tex, (position.xy + 1.) * .5);
+                gl_FragColor = texture2D(tex, (position + 1.) * .5);
             }`);
+        // use texture from register 0
+        this.texture_shader.set_uniformi('tex', 0);
             
         this.raytracer_shader = this.webgl_viewport.make_shader(`
             uniform vec2 u_viewport_size;
@@ -596,6 +599,9 @@ class qc_app {
                 // gl_FragColor.xyz += vec3(rand(), rand(), rand());
                 gl_FragColor.a = 1.;
             }`);
+
+        // use texture from register 0
+        this.raytracer_shader.set_uniformi('u_prev', 0);
 
         const canvas = this.webgl_viewport.canvas;
 
