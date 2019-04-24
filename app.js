@@ -4524,6 +4524,9 @@ class qr_webgl_shader {
     draw_mesh(mesh, draw_type = 'triangles') {
         this.draw_buffer(mesh.vertex_buffers, mesh.index_buffers[draw_type], draw_type == 'triangles' ? 4 /* TRIANGLES */ : 1 /* LINES */);
     }
+    set_uniformi(name, data) {
+        this.uniforms[name] = new Uint16Array(data instanceof Array ? data : [data]);
+    }
     set_uniformf(name, data) {
         this.uniforms[name] = new Float32Array(data);
     }
@@ -4535,14 +4538,17 @@ class qr_webgl_shader {
                 throw new Error(`failed to find uniform ${uniform_name} location.`);
             }
             this.uniforms_locations[uniform_name] = location;
-            let uniform = this.uniforms[uniform_name];
-            if (uniform instanceof Float32Array) {
-                if (uniform.length <= 4) {
-                    gl[`uniform${uniform.length}fv`](location, uniform);
+            let u_data_array = this.uniforms[uniform_name];
+            if (u_data_array instanceof Float32Array) {
+                if (u_data_array.length <= 4) {
+                    gl[`uniform${u_data_array.length}fv`](location, u_data_array);
                 }
                 else {
-                    gl[`uniformMatrix${uniform.length / 4}fv`](location, false, uniform);
+                    gl[`uniformMatrix${u_data_array.length / 4}fv`](location, false, u_data_array);
                 }
+            }
+            else if (u_data_array instanceof Uint16Array) {
+                gl[`uniform${u_data_array.length}iv`](location, u_data_array);
             }
             else {
                 throw new Error(`unsupported`);
@@ -4561,8 +4567,8 @@ class qr_webgl_shader {
                 throw new Error(`Missing location for attribute ${attribute}`);
             }
             buffer.bind_and_upload(gl);
-            gl.enableVertexAttribArray(location);
             gl.vertexAttribPointer(location, buffer.get_element_size(), 5126 /* FLOAT */, false, 0, 0);
+            gl.enableVertexAttribArray(location);
         }
     }
     draw_buffer(vertex_buffers, index_buffer, mode) {
@@ -4584,7 +4590,7 @@ class qr_webgl_shader {
 /// <reference path="../utils/utils.ts" />
 /// <reference path="buffer.ts" />
 class qu_texture {
-    constructor(gl, width, height, { format = 6408 /* RGBA */, type = 5121 /* UNSIGNED_BYTE */, filter = 9729 /* LINEAR */, data = null }) {
+    constructor(gl, width, height, { format = 6408 /* RGBA */, type = 5121 /* UNSIGNED_BYTE */, filter = 9729 /* LINEAR */, wrap = 10497 /* REPEAT */, data = null }) {
         this.gl = gl;
         this.width = width;
         this.height = height;
@@ -4597,6 +4603,8 @@ class qu_texture {
         gl.bindTexture(3553 /* TEXTURE_2D */, this.id);
         gl.texParameteri(3553 /* TEXTURE_2D */, gl.TEXTURE_MAG_FILTER, filter);
         gl.texParameteri(3553 /* TEXTURE_2D */, gl.TEXTURE_MIN_FILTER, filter);
+        gl.texParameteri(3553 /* TEXTURE_2D */, gl.TEXTURE_WRAP_S, wrap);
+        gl.texParameteri(3553 /* TEXTURE_2D */, gl.TEXTURE_WRAP_T, wrap);
         if (data) {
             gl.texImage2D(3553 /* TEXTURE_2D */, 0, format, format, type, data);
         }
@@ -4666,12 +4674,27 @@ function qu_load_obj(file) {
 /// <reference path="core/mesh.ts" />
 /// <reference path="core/texture.ts" />
 /// <reference path="loaders/obj-loader.ts" />
-class qu_delegate {
+class qu_delegate_handle {
+    constructor(fn_, event_) {
+        this.fn_ = fn_;
+        this.event_ = event_;
+    }
+    unbind() {
+        this.event_.remove(this);
+        this.event_ = undefined;
+        this.fn_ = undefined;
+    }
+}
+class qu_multicast_event {
     constructor() {
         this.listeners = [];
     }
     bind(callback) {
         this.listeners.push(callback);
+        return new qu_delegate_handle(callback, this);
+    }
+    remove(handle) {
+        this.listeners.splice(this.listeners.indexOf(handle.fn_), 1);
     }
     broadcast(...payload) {
         for (let listener of this.listeners) {
@@ -4679,15 +4702,33 @@ class qu_delegate {
         }
     }
 }
+function qu_make_attr(val, outer, default_ctor) {
+    if (val instanceof Array) {
+        return new qu_array_attribute(val, outer, default_ctor);
+    }
+    else {
+        return new qu_attribute(val, outer, default_ctor);
+    }
+}
 class qu_attribute {
-    constructor(value_, outer) {
+    constructor(value_, outer, default_ctor) {
         this.value_ = value_;
         this.outer = outer;
-        this.on_value_change_delegate = new qu_delegate();
-        qu_attribute.attribute_list.push(this);
-        if (qu_attribute.on_new_attribute_event) {
-            setTimeout(qu_attribute.on_new_attribute_event.bind(undefined, this), 0);
+        this.default_ctor = default_ctor;
+        this.on_value_change_event = new qu_multicast_event();
+        qu_attribute.g_list.push(this);
+        // for (let array of qu_attribute.g_array_list) {
+        //     let idx = array.value.findIndex(e => e === outer);
+        //     if (idx >= 0) {
+        //         array.childs.splice(idx, 0, this);
+        //     }
+        // }
+        if (qu_attribute.on_new_attribute_delegate) {
+            setTimeout(() => qu_attribute.on_new_attribute_delegate(this), 0);
         }
+    }
+    new_default() {
+        return new this.default_ctor();
     }
     get_value() {
         return this.value_;
@@ -4697,7 +4738,7 @@ class qu_attribute {
     }
     set_value(in_value) {
         this.value_ = in_value;
-        this.on_value_change_delegate.broadcast(this);
+        this.on_value_change_event.broadcast(this);
         return this.value_;
     }
     set value(in_value) {
@@ -4706,7 +4747,9 @@ class qu_attribute {
     alter(fn) {
         return this.set_value(fn(this.value_));
     }
-    get_outer() { return this.outer; }
+    get_outer() {
+        return this.outer;
+    }
     get_name() {
         let outer_name = this.outer.constructor.name;
         for (let prop in this.outer) {
@@ -4716,20 +4759,84 @@ class qu_attribute {
         return `${outer_name}.unknow`;
     }
 }
-qu_attribute.attribute_list = [];
+// all attributes, also arrays
+qu_attribute.g_list = [];
+qu_attribute.g_array_list = [];
+class qu_array_attribute extends qu_attribute {
+    constructor(value_, outer, element_default_ctor) {
+        super(value_, outer);
+        this.element_default_ctor = element_default_ctor;
+        this.childs = [];
+        for (let attr of qu_attribute.g_list) {
+            if (value_.find(e => e === attr.get_outer())) {
+                this.childs.push(attr);
+            }
+        }
+    }
+    new_default_element() {
+        return new this.element_default_ctor();
+    }
+}
 class qu_debug_explorer {
     constructor() {
+        this.attr_widget_list = [];
+        this.attr_delegate_list = [];
         this.root = document.createElement('div');
         this.root.classList.add('debug-root');
         document.body.append(this.root);
-        qu_attribute.on_new_attribute_event = this.on_new_attribute.bind(this);
+        qu_attribute.on_new_attribute_delegate = this.on_new_attribute.bind(this);
+    }
+    get_parent_widget(attribute) {
+        let parentIdx = qu_attribute.g_list.findIndex(attr => {
+            let val = attr.value;
+            if (val instanceof Array) {
+                return val.find(e => e === attribute.get_outer());
+            }
+            return false;
+        });
+        return this.attr_widget_list[parentIdx];
     }
     on_new_attribute(attribute) {
+        let widget = this.create_attribute_widget(attribute, this.get_parent_widget(attribute));
+        if (attribute.value instanceof Array) {
+            let childs = [];
+            for (let g_idx = 0; g_idx < qu_attribute.g_list.length; ++g_idx) {
+                let attr = qu_attribute.g_list[g_idx];
+                let attr_idx = attribute.value.findIndex(e => e === attr.get_outer());
+                if (attr_idx >= 0) {
+                    childs.push(g_idx);
+                }
+            }
+            let non_child = widget.nextSibling;
+            for (let g_idx of childs.sort()) {
+                let child_widget = this.attr_widget_list[g_idx];
+                if (child_widget) {
+                    this.root.insertBefore(child_widget, non_child);
+                    child_widget.classList.add('array-element');
+                    non_child = child_widget.nextSibling;
+                }
+            }
+        }
+    }
+    create_attribute_widget(attribute, parent) {
         let widget = document.createElement('div');
         widget.classList.add('debug-attribute');
-        this.root.append(widget);
-        attribute.on_value_change_delegate.bind(this.on_attribute_changed.bind(this, widget));
+        if (parent) {
+            let non_array_attr = parent.nextElementSibling;
+            while (non_array_attr.classList.contains('array-element')) {
+                non_array_attr = non_array_attr.nextElementSibling;
+            }
+            this.root.insertBefore(widget, non_array_attr);
+            widget.classList.add('array-element');
+        }
+        else {
+            this.root.append(widget);
+        }
+        let handle = attribute.on_value_change_event.bind(this.on_attribute_changed.bind(this, widget));
+        this.attr_delegate_list.push(handle);
+        this.attr_widget_list.push(widget);
         this.on_attribute_changed(widget, attribute);
+        return widget;
     }
     on_attribute_changed(widget, attribute) {
         if (typeof attribute.get_value() === 'boolean') {
@@ -4774,6 +4881,15 @@ class qu_debug_explorer {
                 input.classList.add('attribute-value');
                 widget.append(input);
             }
+        }
+        else if (attribute instanceof qu_array_attribute) {
+            let button = document.createElement('input');
+            button.type = 'button';
+            button.value = `+`;
+            button.classList.add('attribute-value');
+            button.onclick = () => attribute.alter(v => (v.push(attribute.new_default_element()), v));
+            widget.innerHTML = `<div class='attribute-name'>${attribute.get_name()}</div>`;
+            widget.append(button);
         }
         else {
             widget.innerText =
@@ -4829,9 +4945,17 @@ class qr_webgl_viewport {
         this.gl.clear(16384 /* COLOR_BUFFER_BIT */ | 256 /* DEPTH_BUFFER_BIT */);
     }
 }
+class qu_sphere {
+    constructor([x, y, z] = [0, 0, 0], in_radious = 1.) {
+        this.pos = new qu_attribute(vec3.create(), this);
+        this.radius = new qu_attribute(1., this);
+        this.pos.set_value(vec3.fromValues(x, y, z));
+        this.radius.set_value(in_radious);
+    }
+}
+let debug_widget = new qu_debug_explorer();
 class qc_app {
     constructor() {
-        this.debug_widget = new qu_debug_explorer();
         this.quad = qr_webgl_mesh.make_quad();
         this.mouse_down = false;
         this.last_touch_pos = [0, 0];
@@ -4840,32 +4964,37 @@ class qc_app {
         this.do_update = new qu_attribute(true, this);
         this.rays_per_pixel = new qu_attribute(1, this);
         this.fov = new qu_attribute(45, this);
-        this.cam_position = new qu_attribute(vec3.create(), this);
+        this.cam_position = new qu_attribute(vec3.fromValues(0, 0, 1), this);
         this.cam_rotation = new qu_attribute(vec3.create(), this);
         this.cam_sens = new qu_attribute(.1, this);
-        this.cam_lens = new qu_attribute(0.01, this);
+        this.cam_lens = new qu_attribute(0., this);
         this.cam_focus_dist = new qu_attribute(1., this);
+        this.cam_orbit = new qu_attribute(false, this);
         this.frame_idx = new qu_attribute(0, this);
         this.app_start_time = Date.now();
         this.cam_matrix = mat4.create();
         this.cam_quat = quat.create();
         this.flip = false;
     }
+    //spheres = new qu_array_attribute([new qu_sphere()], this, qu_sphere);
     init() {
         this.webgl_viewport = new qr_webgl_viewport('#canvas');
         // document.body.appendChild(this.canvas.canvas);
         this.texture_shader = this.webgl_viewport.make_shader(`
             attribute vec3 vertex;
-            varying vec4 position;
+            varying vec2 position;
             void main() {
-                gl_Position = position = vec4(vertex, 1.);
+                position = vertex.xy;
+                gl_Position =  vec4(vertex, 1.);
             }`, `
-            precision highp float;
+            precision lowp float;
             uniform sampler2D tex;
-            varying vec4 position;
+            varying vec2 position;
             void main() {
-                gl_FragColor = texture2D(tex, (position.xy + 1.) * .5);
+                gl_FragColor = texture2D(tex, (position + 1.) * .5);
             }`);
+        // use texture from register 0
+        this.texture_shader.set_uniformi('tex', 0);
         this.raytracer_shader = this.webgl_viewport.make_shader(`
             uniform vec2 u_viewport_size;
             attribute vec3 vertex;
@@ -4991,6 +5120,12 @@ class qc_app {
                 return b_hit;
             }
 
+            float schlick(float cosine, float ref_idx) {
+                float r0 = (1. - ref_idx) / (1. + ref_idx);
+                r0 = r0 * r0;
+                return r0 + (1. - r0) * pow(1. - cosine, 5.);
+            }
+
             vec3 scatter(inout ray r, const hit_result hit) {
                 // lambertian
                 if (hit.m.type == 0) {
@@ -5002,6 +5137,31 @@ class qc_app {
                 else if (hit.m.type == 1) {
                     vec3 t = reflect(normalize(r.dir), hit.n);
                     r = ray(hit.p, t + rand_point_in_sphere() * hit.m.fuz);
+                    return hit.m.albedo;
+                }
+                // diaelectric (glass)
+                else if (hit.m.type == 2) {
+                    vec3 n = hit.n;
+                    const float ref_idx = 1.45;
+                    float ni = 1. / ref_idx;
+                    float hit_dot = dot(r.dir, hit.n);
+                    float cosine = -hit_dot / length(r.dir);
+
+                    if (hit_dot > 0.) {
+                        n = -n;
+                        ni = 1. / ni;
+                        cosine *= -ref_idx;
+                    }
+
+                    vec3 refracted = refract(r.dir, n, ni);
+                    if (dot(refracted, refracted) != 0.) {
+                        if (rand() > schlick(cosine, ref_idx)) {
+                            r = ray(hit.p, refracted);
+                            return hit.m.albedo;
+                        }
+                    }
+
+                    r = ray(hit.p, reflect(normalize(r.dir), hit.n));
                     return hit.m.albedo;
                 }
                 return vec3(0);
@@ -5040,10 +5200,10 @@ class qc_app {
             }
 
             void main() {
-                spheres[0] = sphere(vec3( 0, 0, -1), .5, tmaterial(0, vec3(.8, .3, .3), 0.));
-                spheres[1] = sphere(vec3(-1, 0, -1),                 .5, tmaterial(1, vec3(.8, .6, .2), 0.5));
-                spheres[2] = sphere(vec3( 1, 0, -1),                 .5, tmaterial(1, vec3(.8, .8, .8), 0.));
-                spheres[3] = sphere(vec3(0, -100.5, -1),           100., tmaterial(0, vec3(.8, .8,  0), 0.));
+                spheres[0] = sphere(vec3( 0, 0, 0), .5, tmaterial(0, vec3(.8, .3, .3), 0.));
+                spheres[1] = sphere(vec3(-1.1, 0, 0),                 .5, tmaterial(2, vec3(1., 1., 1.), 0.5));
+                spheres[2] = sphere(vec3( 1.1, 0, 0),                 .5, tmaterial(1, vec3(.8, .8, .8), 0.));
+                spheres[3] = sphere(vec3(0, -100.5, 0),           100., tmaterial(0, vec3(.8, .8,  0), 0.));
 
                 vec2 inv_size = 1. / u_viewport_size;
                 vec3 cam_pos = (u_view * vec4(0, 0, 0, 1)).xyz;
@@ -5076,6 +5236,8 @@ class qc_app {
                 // gl_FragColor.xyz += vec3(rand(), rand(), rand());
                 gl_FragColor.a = 1.;
             }`);
+        // use texture from register 0
+        this.raytracer_shader.set_uniformi('u_prev', 0);
         const canvas = this.webgl_viewport.canvas;
         canvas.onmousemove = this.on_mouse_move.bind(this);
         canvas.onmousedown = this.on_mouse_down.bind(this);
@@ -5085,13 +5247,13 @@ class qc_app {
         canvas.ontouchmove = this.on_touch_move.bind(this);
         document.onkeydown = this.on_key_down.bind(this);
         document.onkeyup = this.on_key_up.bind(this);
-        for (let attr of qu_attribute.attribute_list) {
+        for (let attr of qu_attribute.g_list) {
             if (attr != this.frame_idx) {
-                attr.on_value_change_delegate.bind(() => this.frame_idx.value = 0);
+                attr.on_value_change_event.bind(() => this.frame_idx.value = 0);
             }
         }
         this.on_resize();
-        this.viewport_size.on_value_change_delegate.bind(this.on_resize.bind(this));
+        this.viewport_size.on_value_change_event.bind(this.on_resize.bind(this));
     }
     on_mouse_up(ev) {
         this.mouse_down = false;
@@ -5135,12 +5297,24 @@ class qc_app {
         height = canvas.height = height * scale;
         this.webgl_viewport.gl.viewport(0, 0, width, height);
         this.raytracer_shader.set_uniformf('u_viewport_size', [width, height]);
-        this.texture0 = new qu_texture(this.webgl_viewport.gl, width, height, {});
-        this.texture1 = new qu_texture(this.webgl_viewport.gl, width, height, {});
+        this.texture0 = new qu_texture(this.webgl_viewport.gl, width, height, { wrap: 33071 /* CLAMP_TO_EDGE */ });
+        this.texture1 = new qu_texture(this.webgl_viewport.gl, width, height, { wrap: 33071 /* CLAMP_TO_EDGE */ });
     }
     update_camera() {
         let [yaw, pitch, roll] = this.cam_rotation.get_value();
         let cam_rotation = quat.fromEuler(this.cam_quat, yaw, pitch, roll);
+        if (this.cam_orbit.get_value()) {
+            this.cam_position.alter(v => {
+                vec3.rotateY(v, v, vec3.create(), 0.01);
+                return v;
+            });
+            this.cam_rotation.alter(v => {
+                let p = this.cam_position.value;
+                v[1] = Math.atan2(p[0], p[2]) * (180.0 / Math.PI);
+                return v;
+            });
+            return;
+        }
         if (this.key_down.w || this.key_down.s) {
             this.cam_position.alter(v => {
                 const sens = this.cam_sens.get_value() * (this.key_down.w ? 1 : -1);
