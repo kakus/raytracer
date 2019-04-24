@@ -15,6 +15,7 @@ class qu_texture {
             format = egl.RGBA,
             type   = egl.UNSIGNED_BYTE,
             filter = egl.LINEAR,
+            wrap   = egl.REPEAT,
             data   = null
         }
     ) { 
@@ -28,6 +29,8 @@ class qu_texture {
         gl.bindTexture(egl.TEXTURE_2D, this.id);
         gl.texParameteri(egl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, filter);
         gl.texParameteri(egl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, filter);
+        gl.texParameteri(egl.TEXTURE_2D, gl.TEXTURE_WRAP_S, wrap);
+        gl.texParameteri(egl.TEXTURE_2D, gl.TEXTURE_WRAP_T, wrap);
         if (data) {
             gl.texImage2D(egl.TEXTURE_2D, 0, format, format, type, data);
         } else {

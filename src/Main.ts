@@ -335,7 +335,7 @@ class qc_app {
     texture_shader: qr_webgl_shader;
     texture0: qu_texture;
     texture1: qu_texture;
-    spheres = new qu_array_attribute([new qu_sphere()], this, qu_sphere);
+    //spheres = new qu_array_attribute([new qu_sphere()], this, qu_sphere);
 
     init() {
         this.webgl_viewport = new qr_webgl_viewport('#canvas');
@@ -690,8 +690,8 @@ class qc_app {
         height = canvas.height = height * scale;
         this.webgl_viewport.gl.viewport(0, 0, width, height);
         this.raytracer_shader.set_uniformf('u_viewport_size', [width, height]);
-        this.texture0 = new qu_texture(this.webgl_viewport.gl, width, height, {});
-        this.texture1 = new qu_texture(this.webgl_viewport.gl, width, height, {}); 
+        this.texture0 = new qu_texture(this.webgl_viewport.gl, width, height, {wrap: egl.CLAMP_TO_EDGE});
+        this.texture1 = new qu_texture(this.webgl_viewport.gl, width, height, {wrap: egl.CLAMP_TO_EDGE}); 
     }
 
     update_camera() {
