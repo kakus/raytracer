@@ -70,11 +70,36 @@ struct sphere {
     tmaterial material;
 };
 
-bool sphere_hit(const sphere self, const ray r, float tmin, float tmax, out hit_result hit) {
-    vec3 oc = r.ori - self.center;
+
+#define SPHERE_STRUCT_SIZE 6.0
+
+vec3 get_sphere_data(float idx, float prop) {
+    return texture2D(u_spheres_tex, vec2((idx * SPHERE_STRUCT_SIZE + prop + 0.5) / (float(u_spheres_num) * SPHERE_STRUCT_SIZE), 0)).rgb;
+}
+
+vec3 get_sphere_pos(float idx) {
+    return get_sphere_data(idx, 0.);
+}
+
+float get_sphere_radius(float idx) {
+    return get_sphere_data(idx, 1.).r;
+}
+
+tmaterial get_sphere_material(float idx) {
+    tmaterial m;
+    m.type   = int(get_sphere_data(idx, 2.).r);
+    m.albedo = get_sphere_data(idx, 3.);
+    m.fuz    = get_sphere_data(idx, 4.).r;
+    return m;
+}
+
+bool sphere_hit(float idx, const ray r, float tmin, float tmax, out hit_result hit) {
+    vec3 center = get_sphere_pos(idx);
+    float radius = get_sphere_radius(idx);
+    vec3 oc = r.ori - center;
     float a = dot(r.dir, r.dir);
     float b = 2. * dot(oc, r.dir);
-    float c = dot(oc, oc) - self.radius * self.radius;
+    float c = dot(oc, oc) - radius * radius;
     float det = b*b - 4.*a*c; 
 
     bool b_hit = false;
@@ -87,15 +112,12 @@ bool sphere_hit(const sphere self, const ray r, float tmin, float tmax, out hit_
         if (b_hit) {
             hit.t = tmp;
             hit.p = ray_point(r, tmp);
-            hit.n = (hit.p - self.center) / self.radius;
-            hit.m = self.material;
+            hit.n = (hit.p - center) / radius;
+            hit.m = get_sphere_material(idx);
         }
     }
     return b_hit;
 }
-
-#define SPHERES_NUM 4
-sphere spheres[SPHERES_NUM];
 
 bool hit_spheres(const ray r, out hit_result res) {
     hit_result hit;
@@ -107,7 +129,7 @@ bool hit_spheres(const ray r, out hit_result res) {
         if (i == u_spheres_num) {
             break;
         }
-        if (sphere_hit(spheres[i], r, t_min, t_max, hit)) {
+        if (sphere_hit(float(i), r, t_min, t_max, hit)) {
             t_max = hit.t;
             res   = hit;
             b_hit = true;
@@ -164,17 +186,6 @@ vec3 scatter(inout ray r, const hit_result hit) {
     return vec3(0);
 }
 
-bool my_refract(inout vec3 v, const vec3 n, const float ni_over_nt) {
-    vec3 uv = normalize(v);
-    float dt = dot(uv, n);
-    float discriminant = 1. - ni_over_nt * ni_over_nt * (1. - dt * dt);
-    if (discriminant > 0.) {
-        v = ni_over_nt * (uv - n * dt) - n * sqrt(discriminant);
-        return true;
-    }
-    return false;
-}
-
 vec3 color(ray r) {
     hit_result hit;
     vec3 attenuation = vec3(1);
@@ -182,7 +193,6 @@ vec3 color(ray r) {
 
     for (int i = 0; i < 8; ++i) {
         if (hit_spheres(r, hit)) {
-            vec3 att = vec3(1);
             attenuation *= scatter(r, hit);
         }
         else {
@@ -197,11 +207,6 @@ vec3 color(ray r) {
 }
 
 void main() {
-    spheres[0] = sphere(vec3( 0, 0, 0), .5, tmaterial(0, vec3(.8, .3, .3), 0.));
-    spheres[1] = sphere(vec3(-1.1, 0, 0),                 .5, tmaterial(2, vec3(1., 1., 1.), 0.5));
-    spheres[2] = sphere(vec3( 1.1, 0, 0),                 .5, tmaterial(1, vec3(.8, .8, .8), 0.));
-    spheres[3] = sphere(vec3(0, -100.5, 0),           100., tmaterial(0, vec3(.8, .8,  0), 0.));
-
     vec2 inv_size = 1. / u_viewport_size;
     vec3 cam_pos = (u_view * vec4(0, 0, 0, 1)).xyz;
     int passes  = int(u_rays_per_pixel);
@@ -227,6 +232,8 @@ void main() {
         gl_FragColor.rgb /= u_frame;
         gl_FragColor.rgb += (u_frame - 1.) * texture2D(u_prev, gl_FragCoord.xy/u_viewport_size).rgb / u_frame;
     }
-
+    // if (gl_FragCoord.y < 10.)
+    // gl_FragColor.rgb = texture2D(u_spheres_tex, gl_FragCoord.xy/u_viewport_size).rgb;
+    // gl_FragColor.rg = gl_FragCoord.xy / u_viewport_size;
     gl_FragColor.a = 1.;
 }

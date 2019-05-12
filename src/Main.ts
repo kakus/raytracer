@@ -49,6 +49,7 @@ class qu_attribute<T> {
     static g_list: qu_attribute<any>[] = [];
     static g_array_list: qu_array_attribute<any>[] = [];
     static on_new_attribute_delegate: Function;
+    static on_any_attribute_change = new qu_multicast_event<(a: qu_attribute<any>) => void>();
 
     public on_value_change_event = new qu_multicast_event<(attr: this) => void>();
 
@@ -65,6 +66,10 @@ class qu_attribute<T> {
         //         array.childs.splice(idx, 0, this);
         //     }
         // }
+
+
+        this.on_value_change_event.bind(
+            e => qu_attribute.on_any_attribute_change.broadcast(e));
 
         if (qu_attribute.on_new_attribute_delegate) {
             setTimeout(() => qu_attribute.on_new_attribute_delegate(this), 0);
@@ -320,13 +325,29 @@ class qu_sphere {
     pos    = new qu_attribute(vec3.create(), this);
     radius = new qu_attribute(1., this);
     mat_type = new qu_attribute(0, this);
-    mat_attu = new qu_attribute(vec3.fromValues(1, 1, 1), this);
+    mat_attu = new qu_attribute(vec3.fromValues(.5, .5, .5), this);
     mat_fuzz = new qu_attribute(0, this);
     mat_ni   = new qu_attribute(0, this);
 
-    constructor([x, y, z] = [0, 0, 0], in_radious = 1.) {
+    constructor([x, y, z] = [Math.random() * 10, 0, Math.random() * 10], in_radious = Math.random() * 0.5 + 0.1) {
         this.pos.set_value(vec3.fromValues(x, y, z));
         this.radius.set_value(in_radious);
+    }
+
+    to_array(): Float32Array {
+        let data = [];
+        for (let key in this) {
+            let prop = this[key];
+            if (prop instanceof qu_attribute) {
+                if (typeof prop.value === 'number') {
+                    data.push(prop.value, 0, 0, 1);
+                } else {
+                    data.push.apply(data, prop.value);
+                    data.push(1);
+                }
+            }
+        }
+        return new Float32Array(data);
     }
 }
 
@@ -366,7 +387,7 @@ class qc_app {
     texture_shader: qr_webgl_shader;
     texture0: qu_texture;
     texture1: qu_texture;
-    spheres = new qu_array_attribute([new qu_sphere([0, 0, 0], 1)], this, qu_sphere);
+    spheres = new qu_array_attribute([new qu_sphere([0, 0, 0], .5)], this, qu_sphere);
     spheres_tex: qu_texture;
     raytracer_frag_src = new qu_asset(`/raytracer_frag.glsl`);
 
@@ -427,13 +448,20 @@ class qc_app {
 
         for (let attr of qu_attribute.g_list) {
             if (attr != this.frame_idx) {
-                attr.on_value_change_event.bind(() => this.frame_idx.value = 0);
+                attr.on_value_change_event.bind(() => {
+                    this.frame_idx.value = 0;
+                });
             }
         }
+        qu_attribute.on_any_attribute_change.bind(e => {
+            if (e !== this.frame_idx) {
+                this.frame_idx.value = 0;
+                this.render_sphere_data();
+            }
+        });
 
         this.on_resize();
         this.viewport_size.on_value_change_event.bind(this.on_resize.bind(this));
-        this.spheres.on_value_change_event.bind(this.render_sphere_data.bind(this));
         this.render_sphere_data();
         this.start_loop();
     }
@@ -574,19 +602,14 @@ class qc_app {
         if (this.spheres_tex) {
             this.spheres_tex.destroy(this.webgl_viewport.gl);
         }
-        var ext = this.webgl_viewport.gl.getExtension('OES_texture_float');
 
         let data: number[] = [];
         for (let sphere of this.spheres.value) {
-            data.push.apply(data, sphere.pos.value);
-            data.push(sphere.radius.value);
-            data.push(sphere.mat_type.value);
-            data.push.apply(data, sphere.mat_attu.value);
-            data.push(sphere.mat_fuzz.value);
-            data.push(sphere.mat_ni.value);
+            data.push.apply(data, sphere.to_array());
         }
         this.raytracer_shader.set_uniformi('u_spheres_num', this.spheres.value.length);
-        this.spheres_tex = new qu_texture(this.webgl_viewport.gl, data.length, 1, { type: egl.FLOAT, data });
+        this.spheres_tex = new qu_texture(this.webgl_viewport.gl, data.length/4, 1, { 
+            type: egl.FLOAT, format: egl.RGBA, wrap: egl.CLAMP_TO_EDGE, data });
     }
 
     flip = false;
