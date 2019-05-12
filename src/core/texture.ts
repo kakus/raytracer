@@ -31,11 +31,17 @@ class qu_texture {
         gl.texParameteri(egl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, filter);
         gl.texParameteri(egl.TEXTURE_2D, gl.TEXTURE_WRAP_S, wrap);
         gl.texParameteri(egl.TEXTURE_2D, gl.TEXTURE_WRAP_T, wrap);
-        if (data) {
-            gl.texImage2D(egl.TEXTURE_2D, 0, format, format, type, data);
+        if (!data || data instanceof Array) {
+            gl.texImage2D(egl.TEXTURE_2D, 0, format, width, height, 0, format, type, new Float32Array(data));
         } else {
-            gl.texImage2D(egl.TEXTURE_2D, 0, format, width, height, 0, format, type, data);
+            gl.texImage2D(egl.TEXTURE_2D, 0, format, format, type, data);
         }
+    }
+
+    destroy(gl: WebGLRenderingContext) {
+        qu_assert(this.id != undefined);
+        gl.deleteTexture(this.id);
+        this.id = undefined;
     }
 
     bind(unit = 0) { 

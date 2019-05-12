@@ -12,8 +12,10 @@ uniform vec2  u_viewport_size;
 uniform float u_fov;
 uniform mat4  u_view;
 uniform float u_lens;
+uniform int  u_spheres_num;
 
 uniform sampler2D u_prev;
+uniform sampler2D u_spheres_tex;
 
 float g_rand_idx = 1.;
 float rand() {
@@ -101,7 +103,10 @@ bool hit_spheres(const ray r, out hit_result res) {
     float t_min = 0.001;
     float t_max = FLT_MAX;
 
-    for (int i = 0; i < SPHERES_NUM; ++i) {
+    for (int i = 0; i < 128; ++i) {
+        if (i == u_spheres_num) {
+            break;
+        }
         if (sphere_hit(spheres[i], r, t_min, t_max, hit)) {
             t_max = hit.t;
             res   = hit;
@@ -223,8 +228,5 @@ void main() {
         gl_FragColor.rgb += (u_frame - 1.) * texture2D(u_prev, gl_FragCoord.xy/u_viewport_size).rgb / u_frame;
     }
 
-    // gl_FragColor.rgb /= float(u_rays_per_pixel);
-    // gl_FragColor.rgb = sqrt(gl_FragColor.rgb);
-    // gl_FragColor.xyz += vec3(rand(), rand(), rand());
     gl_FragColor.a = 1.;
 }

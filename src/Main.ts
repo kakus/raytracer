@@ -319,6 +319,10 @@ class qr_webgl_viewport {
 class qu_sphere {
     pos    = new qu_attribute(vec3.create(), this);
     radius = new qu_attribute(1., this);
+    mat_type = new qu_attribute(0, this);
+    mat_attu = new qu_attribute(vec3.fromValues(1, 1, 1), this);
+    mat_fuzz = new qu_attribute(0, this);
+    mat_ni   = new qu_attribute(0, this);
 
     constructor([x, y, z] = [0, 0, 0], in_radious = 1.) {
         this.pos.set_value(vec3.fromValues(x, y, z));
@@ -362,7 +366,8 @@ class qc_app {
     texture_shader: qr_webgl_shader;
     texture0: qu_texture;
     texture1: qu_texture;
-    //spheres = new qu_array_attribute([new qu_sphere()], this, qu_sphere);
+    spheres = new qu_array_attribute([new qu_sphere([0, 0, 0], 1)], this, qu_sphere);
+    spheres_tex: qu_texture;
     raytracer_frag_src = new qu_asset(`/raytracer_frag.glsl`);
 
     load() {
@@ -407,6 +412,7 @@ class qc_app {
 
         // use texture from register 0
         this.raytracer_shader.set_uniformi('u_prev', 0);
+        this.raytracer_shader.set_uniformi('u_spheres_tex', 1);
 
         const canvas = this.webgl_viewport.canvas;
 
@@ -427,8 +433,9 @@ class qc_app {
 
         this.on_resize();
         this.viewport_size.on_value_change_event.bind(this.on_resize.bind(this));
-
-        this.loop();
+        this.spheres.on_value_change_event.bind(this.render_sphere_data.bind(this));
+        this.render_sphere_data();
+        this.start_loop();
     }
 
     mouse_down = false;
@@ -563,6 +570,25 @@ class qc_app {
         requestAnimationFrame(this.update.bind(this));
     }
 
+    render_sphere_data() {
+        if (this.spheres_tex) {
+            this.spheres_tex.destroy(this.webgl_viewport.gl);
+        }
+        var ext = this.webgl_viewport.gl.getExtension('OES_texture_float');
+
+        let data: number[] = [];
+        for (let sphere of this.spheres.value) {
+            data.push.apply(data, sphere.pos.value);
+            data.push(sphere.radius.value);
+            data.push(sphere.mat_type.value);
+            data.push.apply(data, sphere.mat_attu.value);
+            data.push(sphere.mat_fuzz.value);
+            data.push(sphere.mat_ni.value);
+        }
+        this.raytracer_shader.set_uniformi('u_spheres_num', this.spheres.value.length);
+        this.spheres_tex = new qu_texture(this.webgl_viewport.gl, data.length, 1, { type: egl.FLOAT, data });
+    }
+
     flip = false;
     render() {
         // this.canvas.clear();
@@ -571,6 +597,9 @@ class qc_app {
         this.flip = !this.flip;
 
         prev.bind();
+        if (this.spheres_tex) {
+            this.spheres_tex.bind(1);
+        }
         next.paint(() => {
             this.raytracer_shader.draw_mesh(this.quad, 'triangles');
         })
@@ -579,7 +608,7 @@ class qc_app {
         this.texture_shader.draw_mesh(this.quad, 'triangles');
     }
 
-    loop() {
+    start_loop() {
         requestAnimationFrame(this.update.bind(this));
     }
 }
