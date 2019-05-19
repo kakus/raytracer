@@ -5012,7 +5012,7 @@ let debug_widget = new qu_debug_explorer();
 class qc_app {
     constructor() {
         this.quad = qr_webgl_mesh.make_quad();
-        this.raytracer_frag_src = new qu_asset(`/raytracer_frag.glsl`);
+        this.raytracer_frag_src = new qu_asset(`raytracer_frag.glsl`);
         this.mouse_down = false;
         this.last_touch_pos = [0, 0];
         this.key_down = {};
