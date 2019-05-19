@@ -398,7 +398,7 @@ class qc_app {
     texture0: qu_texture;
     texture1: qu_texture;
     spheres_tex: qu_texture;
-    raytracer_frag_src = new qu_asset(`/raytracer_frag.glsl`);
+    raytracer_frag_src = new qu_asset(`raytracer_frag.glsl`);
 
     load() {
         let promises = [];

@@ -45,29 +45,29 @@ vec2 rand_point_on_circle() {
     return vec2(sin(alpha), cos(alpha));
 }
 
-struct ray { vec3 ori; vec3 dir; };
+struct ray_t { vec3 ori; vec3 dir; };
 
-vec3 ray_point(const ray r, float t) {
+vec3 ray_point(const ray_t r, float t) {
     return r.ori + t * r.dir;
 }
 
-struct tmaterial {
+struct material_t {
     int  type;
     vec3 albedo;
     float fuz; // for metal
 };
 
-struct hit_result {
+struct hit_result_t {
     float t; //time
     vec3  p; //point
     vec3  n; //normal
-    tmaterial m;
+    material_t m;
 };
 
-struct sphere {
+struct sphere_t {
     vec3 center; 
     float radius;
-    tmaterial material;
+    material_t material;
 };
 
 
@@ -85,15 +85,15 @@ float get_sphere_radius(float idx) {
     return get_sphere_data(idx, 1.).r;
 }
 
-tmaterial get_sphere_material(float idx) {
-    tmaterial m;
+material_t get_sphere_material(float idx) {
+    material_t m;
     m.type   = int(get_sphere_data(idx, 2.).r);
     m.albedo = get_sphere_data(idx, 3.);
     m.fuz    = get_sphere_data(idx, 4.).r;
     return m;
 }
 
-bool sphere_hit(float idx, const ray r, float tmin, float tmax, out hit_result hit) {
+bool sphere_hit(float idx, const ray_t r, float tmin, float tmax, out hit_result_t hit) {
     vec3 center = get_sphere_pos(idx);
     float radius = get_sphere_radius(idx);
     vec3 oc = r.ori - center;
@@ -119,8 +119,8 @@ bool sphere_hit(float idx, const ray r, float tmin, float tmax, out hit_result h
     return b_hit;
 }
 
-bool hit_spheres(const ray r, out hit_result res) {
-    hit_result hit;
+bool hit_spheres(const ray_t r, out hit_result_t res) {
+    hit_result_t hit;
     bool b_hit = false;
     float t_min = 0.001;
     float t_max = FLT_MAX;
@@ -145,17 +145,17 @@ float schlick(float cosine, float ref_idx) {
     return r0 + (1. - r0) * pow(1. - cosine, 5.);
 }
 
-vec3 scatter(inout ray r, const hit_result hit) {
+vec3 scatter(inout ray_t r, const hit_result_t hit) {
     // lambertian
     if (hit.m.type == 0) {
         vec3 target = hit.p + hit.n + rand_point_in_sphere();
-        r = ray(hit.p, target - hit.p);
+        r = ray_t(hit.p, target - hit.p);
         return hit.m.albedo;
     }
     // metal
     else if (hit.m.type == 1) {
         vec3 t = reflect(normalize(r.dir), hit.n);
-        r = ray(hit.p, t + rand_point_in_sphere() * hit.m.fuz);
+        r = ray_t(hit.p, t + rand_point_in_sphere() * hit.m.fuz);
         return hit.m.albedo;
     }
     // diaelectric (glass)
@@ -175,19 +175,19 @@ vec3 scatter(inout ray r, const hit_result hit) {
         vec3 refracted = refract(r.dir, n, ni);
         if (dot(refracted, refracted) != 0.) {
             if (rand() > schlick(cosine, ref_idx)) {
-                r = ray(hit.p, refracted);
+                r = ray_t(hit.p, refracted);
                 return hit.m.albedo;
             }
         }
 
-        r = ray(hit.p, reflect(normalize(r.dir), hit.n));
+        r = ray_t(hit.p, reflect(normalize(r.dir), hit.n));
         return hit.m.albedo;
     }
     return vec3(0);
 }
 
-vec3 color(ray r) {
-    hit_result hit;
+vec3 color(ray_t r) {
+    hit_result_t hit;
     vec3 attenuation = vec3(1);
     vec3 color = vec3(0);
 
@@ -217,7 +217,7 @@ void main() {
         vec2 lens = rand_point_on_circle() * rand() * u_lens;
         vec3 lens_p = (u_view * vec4(lens, 0, 0)).xyz;
         vec4 dir = u_view * vec4(position.xy + randv2(.9) * inv_size, -h, 0);
-        ray r = ray(cam_pos + lens_p, dir.xyz - lens_p);
+        ray_t r = ray_t(cam_pos + lens_p, dir.xyz - lens_p);
         gl_FragColor.rgb += color(r);
         if (--passes == 0) {
             gl_FragColor.rgb /= u_rays_per_pixel;
