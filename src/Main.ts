@@ -184,7 +184,7 @@ class qu_debug_explorer {
         widget.classList.add('debug-attribute');
         if (parent) {
             let non_array_attr = parent.nextElementSibling;
-            while (non_array_attr.classList.contains('array-element')) { 
+            while (non_array_attr && non_array_attr.classList.contains('array-element')) { 
                 non_array_attr = non_array_attr.nextElementSibling;
             }
             this.root.insertBefore(widget, non_array_attr);
