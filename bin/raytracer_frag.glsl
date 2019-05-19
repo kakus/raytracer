@@ -228,6 +228,8 @@ void main() {
         }
     }
 
+    gl_FragColor.rgb = sqrt(gl_FragColor.rgb);
+
     if (u_frame > 1.) {
         gl_FragColor.rgb /= u_frame;
         gl_FragColor.rgb += (u_frame - 1.) * texture2D(u_prev, gl_FragCoord.xy/u_viewport_size).rgb / u_frame;

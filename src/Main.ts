@@ -292,6 +292,10 @@ class qr_webgl_viewport {
         // this.gl.enable(egl.DEPTH_TEST);
     }
 
+    enable_extension(id: string) {
+        qu_assert(this.gl.getExtension(id));
+    }
+
     public make_shader(vertex: string, fragment: string) {
         let gl = this.gl;
 
@@ -329,9 +333,15 @@ class qu_sphere {
     mat_fuzz = new qu_attribute(0, this);
     mat_ni   = new qu_attribute(0, this);
 
-    constructor([x, y, z] = [Math.random() * 10, 0, Math.random() * 10], in_radious = Math.random() * 0.5 + 0.1) {
+    constructor(
+        [x, y, z] = [Math.random() * 10, 0, Math.random() * 10], 
+        in_radious = Math.random() * 0.5 + 0.1,
+        type: 0 | 1 | 2 = 0,
+        [r, g, b] = [0.5, 0.5, 0.5]) {
         this.pos.set_value(vec3.fromValues(x, y, z));
         this.radius.set_value(in_radious);
+        this.mat_type.value = type;
+        this.mat_attu.value = vec3.fromValues(r, g, b);
     }
 
     to_array(): Float32Array {
@@ -387,7 +397,6 @@ class qc_app {
     texture_shader: qr_webgl_shader;
     texture0: qu_texture;
     texture1: qu_texture;
-    spheres = new qu_array_attribute([new qu_sphere([0, 0, 0], .5)], this, qu_sphere);
     spheres_tex: qu_texture;
     raytracer_frag_src = new qu_asset(`/raytracer_frag.glsl`);
 
@@ -404,6 +413,8 @@ class qc_app {
 
     init() {
         this.webgl_viewport = new qr_webgl_viewport('#canvas');
+        this.webgl_viewport.enable_extension('OES_texture_float');
+
         // document.body.appendChild(this.canvas.canvas);
         this.texture_shader = this.webgl_viewport.make_shader(`
             attribute vec3 vertex;
@@ -513,13 +524,20 @@ class qc_app {
     do_update    = new qu_attribute(true, this);
     rays_per_pixel = new qu_attribute(1, this);
     fov          = new qu_attribute(45, this);
-    cam_position = new qu_attribute(vec3.fromValues(0, 0, 1), this);
+    cam_position = new qu_attribute(vec3.fromValues(0, 0, 5), this);
     cam_rotation = new qu_attribute(vec3.create(), this);
     cam_sens     = new qu_attribute(.1, this);
     cam_lens     = new qu_attribute(0., this);
     cam_focus_dist = new qu_attribute(1., this);
     cam_orbit    = new qu_attribute(false, this);
     frame_idx      = new qu_attribute(0, this);
+    spheres = new qu_array_attribute([
+        new qu_sphere([0, -100, 0], 99, 0, [.8, .8, 0]),
+        new qu_sphere([0, 0, 0], 1., 2, [1, 1, 1]),
+        new qu_sphere([2.1, 0, 0], 1., 0, [.1, 0.2, 0.5]),
+        new qu_sphere([-2.1, 0, 0], 1., 1, [0.8, 0.6, .2])
+    ], this, qu_sphere);
+
 
     app_start_time = Date.now();
     cam_matrix     = mat4.create();
@@ -607,9 +625,10 @@ class qc_app {
         for (let sphere of this.spheres.value) {
             data.push.apply(data, sphere.to_array());
         }
+        let gl = this.webgl_viewport.gl;
         this.raytracer_shader.set_uniformi('u_spheres_num', this.spheres.value.length);
         this.spheres_tex = new qu_texture(this.webgl_viewport.gl, data.length/4, 1, { 
-            type: egl.FLOAT, format: egl.RGBA, wrap: egl.CLAMP_TO_EDGE, data });
+            type: gl.FLOAT, format: egl.RGBA, wrap: egl.CLAMP_TO_EDGE, filter: egl.NEAREST, data });
     }
 
     flip = false;
